@@ -22,6 +22,7 @@ from dependencies import backup, install_shfmt
 
 REPO = Path(__file__).resolve().parent
 HOOKS = [
+    ("SessionStart", None, "health_check.py"),
     ("PreToolUse", "Bash|Edit|MultiEdit|Write", "config_guard.py"),
     ("PreToolUse", "Bash", "bash_guard.py"),
     ("PreToolUse", "mcp__ccd_session__spawn_task", "spawn_task_redirect.py"),
@@ -179,6 +180,8 @@ def main():
                     help="opt-in global askUserQuestionTimeout; inactive during Remote Control")
     ap.add_argument("--agent-push", action="store_true", help="opt-in agentPushNotifEnabled")
     ap.add_argument("--proactive", action="store_true", help="opt-in global outputStyle=Proactive")
+    ap.add_argument("--config-guard", choices=("on", "off"),
+                    help="owner-controlled configuration protection (default: on; no environment override)")
     ap.add_argument("--shfmt", default=os.environ.get("CCU_SHFMT"),
                     help="offline source of the pinned official shfmt binary (SHA256 verified)")
     ap.add_argument("--prepare-plugin", action="store_true",
@@ -201,6 +204,8 @@ def main():
     config = load_settings(config_path)
     if not isinstance(settings, dict) or not isinstance(config, dict):
         sys.exit("Settings and unattended config must be JSON objects; nothing was changed.")
+    if config.get("config_guard", "on") not in ("on", "off"):
+        sys.exit("config_guard must be on or off; nothing was changed.")
 
     if args.uninstall:
         uninstall_settings(settings, hooks_dir)
@@ -230,7 +235,7 @@ def main():
     cdir.mkdir(parents=True, exist_ok=True)
     hooks_dir.mkdir(exist_ok=True)
     install_notices(cdir)
-    for key, default in (("mode", "auto"), ("idle_seconds", 300), ("max_stop_continuations", 3)):
+    for key, default in (("mode", "auto"), ("idle_seconds", 300), ("max_stop_continuations", 3), ("config_guard", "on")):
         value = getattr(args, key)
         config[key] = value if value is not None else config.get(key, default)
     write_if_changed(config_path, json.dumps(config, indent=2) + "\n")

@@ -40,6 +40,8 @@ class PluginTest(unittest.TestCase):
         self.assertEqual(market["plugins"][0]["source"], "./")
         self.assertNotIn("hooks", plugin)
         self.assertEqual(set(self.manifest["hooks"]), {"PreToolUse", "PermissionRequest", "Stop", "UserPromptSubmit", "SessionStart"})
+        self.assertTrue(any(" health_check" in hook["command"]
+                            for entry in self.manifest["hooks"]["SessionStart"] for hook in entry["hooks"]))
         for entries in self.manifest["hooks"].values():
             for entry in entries:
                 for hook in entry["hooks"]:
@@ -90,6 +92,7 @@ class PluginTest(unittest.TestCase):
                            capture_output=True, text=True, check=True)
         self.assertEqual(rules.read_bytes(), original)
         self.assertIsNotNone(self.invoke("context", {"source": "startup"}))
+        self.assertIsNone(self.invoke("health_check", {"source": "startup"}))
         payload = {"hook_event_name": "PreToolUse", "session_id": "plugin-migration", "tool_name": "Bash",
                    "tool_input": {"command": "rm $EMPTY/path"}}
         out = self.invoke("bash_guard", payload)
@@ -98,3 +101,7 @@ class PluginTest(unittest.TestCase):
         out = self.invoke("config_guard", payload)
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
         self.assertEqual(rules.read_bytes(), original)
+        (self.config / "tools/shfmt/shfmt").unlink()
+        warning = self.invoke("health_check", {"source": "compact"})
+        self.assertIn("install.py", warning["systemMessage"])
+        self.assertIn("Shell safety", warning["hookSpecificOutput"]["additionalContext"])

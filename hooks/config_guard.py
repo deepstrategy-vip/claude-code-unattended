@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deny known guardrail configuration mutations, with audit-before-decision.
+"""Deny known guardrail configuration mutations, with best-effort audit.
 
 Adapted from Karan Bansal's MIT config-guard, pinned at
 57a28c7687305e4a9b9dd50490e9b3c552c71ca4. Copyright (c) 2026 Karan Bansal.
@@ -8,8 +8,10 @@ See third_party/config-guard for the license, source mapping and limitations.
 The upstream path taxonomy and CLI grammar are retained; shfmt identifies
 executing commands and redirection targets instead of whole-command regexes.
 This is defense in depth, not an OS boundary: dynamic paths, interpreter code,
-external scripts and unrecognized mutators can evade classification. Failures
-including parser/audit failure return no decision. No ask/allow escape hatch.
+external scripts and unrecognized mutators can evade classification. Input,
+configuration and parser errors return no decision; audit errors keep a known
+protective denial. Only the owner-controlled JSON file enables/disables this
+guard, and its switch remains protected when normal guarding is off.
 """
 import json
 import os
@@ -27,7 +29,7 @@ PROTECTED_PATHS = [
     ("critical", "settings-file", r"(^|/)\.claude/settings(\.local)?\.json$"),
     ("critical", "managed-settings", r"(^|/)managed-settings\.json$"),
     ("critical", "hook-script", r"(^|/)\.claude/hooks(/|$)"),
-    ("critical", "hooks-manifest", r"(^|/)hooks\.json$"),
+    ("critical", "hooks-manifest", r"(^|/)hooks/hooks\.json$"),
     ("high", "mcp-config", r"(^|/)\.mcp\.json$"),
     ("high", "plugin-manifest", r"(^|/)\.claude-plugin(/|$)"),
     ("strict", "claude-md", r"(^|/)CLAUDE(\.local)?\.md$"),
@@ -45,7 +47,7 @@ DELETE_VERBS = {"rm", "unlink", "shred", "trash"}
 MOVE_COPY_VERBS = {"mv", "cp", "rsync", "install", "ln"}
 WRITE_VERBS = {"tee", "truncate", "dd"}
 OUTPUT_REDIRECTS = {">", ">>", ">|", "&>", "&>>", "<>"}
-CONFIG_FILES = {"settings.json", "settings.local.json", "CLAUDE.md",
+CONFIG_FILES = {"settings.json", "settings.local.json",
                 "unattended-config.json", "unattended-decisions.jsonl"}
 CONFIG_DIRS = {"hooks", "tools", "unattended-state", "plugins", "rules"}
 
@@ -69,15 +71,22 @@ def under(path, root):
     return path == root or root in path.parents
 
 
-def check_file_path(file_path, cwd=None, safety_level="high"):
+def check_file_path(file_path, cwd=None, safety_level="high", switch_only=False):
     """Return a fixed pattern id, or None. Never return private path text."""
     threshold = LEVELS.get(safety_level, LEVELS["high"])
     candidates = resolve_candidates(file_path, cwd)
+    root = config_dir().resolve()
+    switch = root / "unattended-config.json"
+    for candidate in candidates[1:]:
+        # Removing the configuration root also removes its owner-only switch.
+        if Path(candidate) in (switch, root):
+            return "config-guard-switch" if Path(candidate) == switch else "config-root"
+    if switch_only:
+        return None
     for candidate in candidates:
         for level, pattern_id, pattern in PATTERNS:
             if LEVELS[level] <= threshold and pattern.search(candidate):
                 return pattern_id
-    root = config_dir().resolve()
     plugin = os.environ.get("CLAUDE_PLUGIN_ROOT")
     plugin_root = Path(plugin).expanduser().resolve() if plugin else None
     for candidate in candidates[1:]:
@@ -122,6 +131,32 @@ def is_cli_write(words):
     if args[1] in CLI_WRITES.get(args[0], set()):
         return True
     return len(args) >= 3 and args[:2] == ["plugin", "marketplace"] and args[2] in MARKETPLACE_WRITES
+
+
+def is_switch_command(words):
+    """Recognize the product installer's owner-only toggle, without execution."""
+    if not words or not isinstance(words[0], str):
+        return False
+    executable = Path(words[0]).name.lower()
+    args = words[1:]
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", executable):
+        # Only recognize a script invocation; -c/-m bodies are not script paths.
+        if "-c" in args or "-m" in args:
+            return False
+        script = next((word for word in args if isinstance(word, str) and not word.startswith("-")), None)
+        if script is None or Path(script).name != "install.py":
+            return False
+        args = args[args.index(script) + 1:]
+    elif executable != "install.py":
+        return False
+    if "--help" in args or "-h" in args:
+        return False
+    for index, arg in enumerate(args):
+        if arg in {"--config-guard=on", "--config-guard=off"}:
+            return True
+        if arg == "--config-guard" and index + 1 < len(args) and args[index + 1] in {"on", "off"}:
+            return True
+    return False
 
 
 def mutation_targets(words):
@@ -220,7 +255,7 @@ def known_word(word, shell_ast):
     return parts_value(word.get("Parts", []))
 
 
-def check_bash_command(command, cwd=None):
+def check_bash_command(command, cwd=None, switch_only=False):
     import shell_ast
     ast = shell_ast.parse(command)
     if ast is None:
@@ -233,7 +268,9 @@ def check_bash_command(command, cwd=None):
         words = executable_words([known_word(word, shell_ast) for word in raw_args])
         if not words:
             continue
-        if is_cli_write(words):
+        if is_switch_command(words):
+            return "config-guard-switch"
+        if not switch_only and is_cli_write(words):
             return "claude-cli-config"
         if words[0] == "cd" and len(words) >= 2 and isinstance(words[1], str):
             # Bounded work even for adversarial scripts with many cd calls.
@@ -243,13 +280,13 @@ def check_bash_command(command, cwd=None):
         for target in mutation_targets(words):
             if isinstance(target, str):
                 for base in bases:
-                    found = check_file_path(target, base)
+                    found = check_file_path(target, base, switch_only=switch_only)
                     if found:
                         return found
         # Nonliteral arguments with a literal protected suffix are identifiable
         # without expanding attacker-controlled env values. Arbitrary variable
         # paths such as "$DIR/settings.json" remain intentionally unknown.
-        if mutation_targets(words):
+        if not switch_only and mutation_targets(words):
             for word in raw_args[1:]:
                 if known_word(word, shell_ast) is None:
                     raw = shell_ast.word_text(word, command)
@@ -263,10 +300,10 @@ def check_bash_command(command, cwd=None):
         target = known_word(word, shell_ast)
         if target is not None:
             for base in bases:
-                found = check_file_path(target, base)
+                found = check_file_path(target, base, switch_only=switch_only)
                 if found:
                     return found
-        else:
+        elif not switch_only:
             raw = shell_ast.word_text(word, command).strip("\"'")
             for level, pattern_id, pattern in PATTERNS:
                 if LEVELS[level] <= LEVELS["high"] and pattern.search(raw):
@@ -274,16 +311,27 @@ def check_bash_command(command, cwd=None):
     return None
 
 
-def check_tool(tool_name, tool_input, cwd=None):
+def check_tool(tool_name, tool_input, cwd=None, switch_only=False):
     if not isinstance(tool_input, dict):
         return None
     if tool_name in {"Edit", "MultiEdit", "Write"}:
-        return check_file_path(tool_input.get("file_path"), cwd)
+        return check_file_path(tool_input.get("file_path"), cwd, switch_only=switch_only)
     if tool_name == "Bash":
         command = tool_input.get("command")
         if isinstance(command, str) and command:
-            return check_bash_command(command, cwd)
+            return check_bash_command(command, cwd, switch_only=switch_only)
     return None
+
+
+def config_guard_enabled():
+    """The on/off choice is owned by JSON configuration, never by an env knob."""
+    path = config_dir() / "unattended-config.json"
+    if not path.exists():
+        return True
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("config_guard", "on") not in {"on", "off"}:
+        raise ValueError("invalid config guard configuration")
+    return value.get("config_guard", "on") == "on"
 
 
 def handle(payload):
@@ -291,11 +339,17 @@ def handle(payload):
         return None
     if payload.get("hook_event_name") not in (None, "PreToolUse"):
         return None
-    found = check_tool(payload.get("tool_name"), payload.get("tool_input"), payload.get("cwd"))
-    if found and record_decision(payload, "config-protected", "Guardrail configuration mutation denied",
-                                 {"pattern": found}, json.dumps(payload.get("tool_input"), sort_keys=True)):
+    found = check_tool(payload.get("tool_name"), payload.get("tool_input"), payload.get("cwd"),
+                       switch_only=not config_guard_enabled())
+    if found:
+        try:
+            record_decision(payload, "config-protected", "Guardrail configuration mutation denied",
+                            {"pattern": found}, json.dumps(payload.get("tool_input"), sort_keys=True))
+        except Exception:
+            pass  # A broken audit must not disable a known protective denial.
         return pre_deny("Guardrail configuration is protected (" + found + "). "
-                        "Defer this change for the owner; do not disable protections or bypass this denial. "
+                        "The owner may edit it, delegate to Codex, or run install.py --config-guard off. "
+                        "Claude must not run that command, disable protections, or bypass this denial. "
                         "Continue other independently authorized work.")
     return None
 

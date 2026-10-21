@@ -2,6 +2,19 @@
 
 **结论：本轮应直接复用 shfmt 官方固定版本二进制，替换手写 shell 分词、引号屏蔽和 heredoc 处理；以 MIT 的 claude-code-hooks/config-guard 分类实现为基础移植配置保护；直接采用 Claude Code 官方 plugin + marketplace 格式作为可选分发入口，保留现有安装器处理旧版本迁移、备份和幂等。** 无人值守核心中的 HID、低风险答案、拒绝计划、PermissionRequest 只 deny、有限 Stop 和先脱敏审计，目前没有找到同时满足全部边界的成熟直接替代，应保留小范围政策适配。官方 Proactive 已是日常少问的现成功能，继续显式启用；官方 Stop 非错误反馈接口值得评估，但不为了形式复用而无验证地改动稳定输出。**DCG 不在本轮安装或 vendor**：当前许可证带 OpenAI/Anthropic rider，不能当普通 MIT；其不可验证输入处理也不符合本任务统一 fail-open。以下为 A 阶段的实现决策依据，**不是 B 已实现或已发布的声明**。基线为 PR #1 的 51 项 unittest；隔离实验仅证明 48 条 shell 基线能被 shfmt 解析，不证明分类器或 Desktop 端到端效果。
 
+## 外部复查修订后的当前政策
+
+PR #2 的`b765901b788a335a2e3cd3a7ea566100f18c166f`收到四项修改请求，旧头未通过。修订后的当前政策如下；后面的A阶段候选比较保留为历史选型快照，涉及config-guard审计失败放行、过宽保护范围或无开关的旧建议，**已被本节及末尾B状态取代**。
+
+| 复查修订 | 当前接口及边界 |
+|---|---|
+| 依赖健康可见 | managed/native的SessionStart检查固定shfmt版本；健康不输出，缺失/版本不符给systemMessage修复install.py提示及additionalContext保守Shell safety上下文，仍fail-open且不联网修复 |
+| 保护拒绝保留 | config-guard与Bash/redirect先尝试脱敏审计，日志失败仍输出确定性deny；替使用者作答、计划/权限拒绝、Stop续跑仍须成功审计 |
+| 缩小默认范围 | 默认high排除实际全局CLAUDE.md；hook manifest仅hooks/hooks.json，不拦普通src/hooks.json；本产品开关配置继续保护 |
+| 负责人控制 | unattended-config.json的config_guard=on/off，默认on；install.py --config-guard on/off；没有环境override；off放开普通保护目标，但开关文件/已识别自停用仍阻止 |
+
+Claude不能自行运行停用安装命令绕过拒绝；应交负责人手动、Codex或负责人在终端运行安装器处理。该开关是逻辑政策，不是OS访问控制或不可逆锁定，任意同用户程序、解释器和动态机制仍有已知缺口。修订后Python 3.9与3.14各112项完整测试已通过，包含managed/plugin依赖健康、缺失、版本不符、超时及配置开关回归。下一步推新头并取得匹配当前完整SHA的复查通过；102项只保留为旧头历史结果，不代替新头批准。
+
 ## 组件替换范围：复用基础设施，保留本地政策
 
 本报告先读取上一轮报告及仓库 RESEARCH，再重新核查候选源码、许可证、维护和新项目。事实分为【官方契约】、【上游源码/文档】、【本轮实验】和【工程判断】；后者只表示选型判断。星数、最近提交和 issue 状态是 **2026-10-21** 快照，父仓库活跃不等于具体组件最近修改，少量 issue 样本也不构成响应 SLA。社区问题报告未在本机复现的，均不标成实测故障。
@@ -9,7 +22,7 @@
 | 当前组件/新增需求 | 决定 | 直接使用或改编的基础 | 保留范围与不能突破的边界 |
 |---|---|---|---|
 | bash_guard shell 解析 | **直接用 shfmt v3.14.1** | 官方 JSON AST；Python stdlib 遍历 | 删除手写分词/引号/heredoc 解析；保留 shell-c/eval、`${VAR:?}`、find、路径来源等小范围改写政策；只 deny 或无意见，绝不 allow |
-| config-guard | **以现成为基础改** | claude-code-hooks 固定 SHA 的 MIT 分类表、路径解析与 CLI 枚举；shell 路径交给同一 AST | 不移植 ask、ALLOW override、原文日志；审计失败放行；不能宣称防任意解释器或同用户外部程序 |
+| config-guard | **以现成为基础改** | claude-code-hooks 固定 SHA 的 MIT 分类表、路径解析与 CLI 枚举；shell 路径交给同一 AST | A原建议审计失败放行已被复查取代：当前保护deny审计尽力而为；保留不移植ask/ALLOW override/原文日志及非硬边界 |
 | plugin + marketplace | **直接用官方格式** | plugin manifest、hooks/hooks.json、marketplace；SessionStart 提供同一规则文本 | 可选入口，先保留 managed 安装；互斥注册；不将审计放可被卸载删除的插件目录 |
 | install.py | **保留为迁移适配** | 官方插件安装负责新入口，现安装器负责既有用户状态 | 幂等、改前备份、卸载、临时配置根、保留规则块外正文与186天日志；不默默切换真实环境 |
 | HID presence | **保留** | Apple HIDIdleTime（已有） | 只代表本机输入空闲；信号未知/超时不介入；不等于人体在场或手机活动 |
@@ -62,7 +75,7 @@ DCG 的价值是更广的危险命令上下文分类，但不能按“始终静�
 
 【上游明确限制】config-guard 不是真正 shell parser：变量路径、解释器写入、git checkout/restore、chmod及Bash symlink重定向存在缺口；同一段命令出现 mutation verb 与保护路径可能误拦互不相关参数。直接Edit/Write会解析symlink及不存在文件的父目录。这些缺口应在改编文档中继续列出；接入 AST 可减少“同段不同命令”误判，但不能证明阻断任意程序写文件。（[known limits](https://github.com/karanb192/claude-code-hooks/blob/57a28c7687305e4a9b9dd50490e9b3c552c71ca4/plugins/config-guard/README.md#known-limits)）
 
-【工程判断】应移植保护路径/level/CLI变更枚举与symlink语义，保留MIT原许可/版权、固定SHA、差异说明及对应测试场景。默认high，加上实际本产品配置、hook与安装目录；不strict封锁所有项目CLAUDE.md，避免妨碍正常开发。删除上游ask、allow逃生口、原文log入口，输出前用本项目固定pattern id + hash审计。它只能是纵深防御：同用户进程本有文件写权限，且fail-open意味着某些故障会放行，不能宣传成不可绕过边界。（[MIT条款](https://github.com/karanb192/claude-code-hooks/blob/57a28c7687305e4a9b9dd50490e9b3c552c71ca4/LICENSE)）
+【A阶段原判断，范围与审计故障处理已由复查修订】应移植保护路径/level/CLI变更枚举与symlink语义，保留MIT原许可/版权、固定SHA、差异说明及对应测试场景。默认high，加上实际本产品配置、hook与安装目录；不strict封锁所有项目CLAUDE.md，避免妨碍正常开发。删除上游ask、allow逃生口、原文log入口，输出前用本项目固定pattern id + hash审计。它只能是纵深防御：同用户进程本有文件写权限，且fail-open意味着某些故障会放行，不能宣传成不可绕过边界。（[MIT条款](https://github.com/karanb192/claude-code-hooks/blob/57a28c7687305e4a9b9dd50490e9b3c552c71ca4/LICENSE)）
 
 【官方契约】plugin标准目录是manifest与根hooks；`${CLAUDE_PLUGIN_ROOT}`指向插件脚本，市场source相对市场根。SessionStart提供规则上下文，包含resume/compact等来源；插件output-style会改变用户风格，`force-for-plugin`会强制覆盖，不适合默认使用。审计不能放在随更新变动的plugin root或默认卸载会删除的数据目录。（[marketplace](https://code.claude.com/docs/en/plugins/create-marketplace#write-relative-paths-from-the-marketplace-root)、[SessionStart](https://code.claude.com/docs/en/hooks#sessionstart)、[styles](https://code.claude.com/docs/en/output-styles#frontmatter-reference)、[环境变量](https://code.claude.com/docs/en/plugins-reference#environment-variables)）
 
@@ -102,7 +115,7 @@ DCG 的价值是更广的危险命令上下文分类，但不能按“始终静�
 
 ## B阶段应保留全部旧场景，再验证新增边界
 
-当前交付是A选型与研究，不改变实际用户配置、没有发布，也未声称新组件测试通过。B应在最新main分支上实现shfmt适配、MIT来源配置保护、官方可选插件入口，删掉被替代解析代码。第三方来源/版权必须进入README致谢及许可文件；无可匹配成熟实现的本地政策明确说明保留原因，而不是宣称全部已被现成方案替换。
+A阶段交付时仅含选型与研究，不改变实际用户配置、没有发布，也未声称新组件测试通过。B应在最新main分支上实现shfmt适配、MIT来源配置保护、官方可选插件入口，删掉被替代解析代码。第三方来源/版权必须进入README致谢及许可文件；无可匹配成熟实现的本地政策明确说明保留原因，而不是宣称全部已被现成方案替换。
 
 | 验证范围 | 不能少的场景 | 通过的含义与局限 |
 |---|---|---|
@@ -112,7 +125,7 @@ DCG 的价值是更广的危险命令上下文分类，但不能按“始终静�
 | plugin与迁移 | root含空格；全部event；compact重新上下文；规则缺失fail-open；互斥注册；幂等无新增备份；卸载保留日志与用户正文 | JSON/临时目录成功不等于真实Desktop已加载 |
 | 发布核对 | 仅当前PR头获得Claude通过后合并；再安装；settings与规则块外正文核对 | 必须用精确SHA门禁，头变重新复查；真实可见行为未验仍保留缺口 |
 
-所有自动决定先写脱敏审计，不存原文，至少186天；解析失败、脚本错误、超时和审计失败按本任务fail-open，不配置 `onFailure:block`。config-guard只deny；无任何自动学习的新allow规则、无权限模式切换、无默认第三方通知、无付费模型调用。复查前只用临时配置根和任务临时二进制，实际用户配置不改。发布仍需与当前头完全一致的Claude复查通过，不能从文档或旧测试推断批准。（[官方故障语义](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails)）
+【A阶段原建议，审计故障部分已由外部复查修订】自动决定先写脱敏审计，不存原文，至少186天；原拟解析失败、脚本错误、超时和审计失败按fail-open，不配置 `onFailure:block`。config-guard只deny；无任何自动学习的新allow规则、无权限模式切换、无默认第三方通知、无付费模型调用。复查前只用临时配置根和任务临时二进制，实际用户配置不改。发布仍需与当前头完全一致的Claude复查通过，不能从文档或旧测试推断批准。（[官方故障语义](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails)）
 
 ## 第三方实验前来源、版本与校验计划
 
@@ -134,10 +147,16 @@ DCG 的价值是更广的危险命令上下文分类，但不能按“始终静�
 DCG 不下载执行文件、不运行：当前和 [v0.15.3 的 LICENSE](https://github.com/Dicklesworthstone/destructive_command_guard/blob/v0.15.3/LICENSE) 均是带 OpenAI/Anthropic rider 的自定义许可证，禁止把它归类为普通 MIT。
 
 
-## B阶段本地实现与验证记录
+## B阶段旧头本地实现与验证记录（复查前）
 
 2026-10-21：已完成shfmt AST替换、MIT config-guard移植、可选官方插件入口、固定摘要依赖安装和迁移适配。Stop输出保持已有block协议，未增加未验证的兼容性改动。原手写shell分段、引号屏蔽和heredoc扫描已删除；仍保留命令政策和少量静态参数解码。
 
 Python 3.9与3.14分别通过102项unittest，保留前版51项全部场景与48条shell基线，并新增25条shell语义样例、parser故障/非阻塞超时、配置保护读写与脱敏审计、实际调用临时安装的guards、插件迁移及逐字节用户正文保留。官方release下载与摘要验证也通过系统Python在隔离目录完成。独立源码复核发现并修复了旧安装器尾部空白裁剪和CRLF转换问题。
 
 这些结论只证明确定性本地行为；未调用付费模型，未验证Desktop/手机端到端，尚需PR CI与精确当前头的Claude复查。发布状态以任务进度和PR为准。复查通过前没有修改真实配置，临时依赖将在不再需要时清理。
+
+## B阶段外部复查后的修订状态
+
+前一提交已实现parser、MIT配置保护和可选插件入口，Python 3.9与3.14各102项通过；这是PR #2旧头的结果。外部Claude复查请求的四项修订已落实，Python 3.9与3.14各112项完整测试通过；新头CI与再次复查待完成。当前config-guard仅是已知路径的纵深防御，审计失败仍保留保护deny；其默认high不保护全局CLAUDE.md，hooks-manifest限定hooks/hooks.json；负责人开关默认on，无环境覆盖，off也不允许Claude改开关/已识别自停用。
+
+SessionStart在managed/native入口新增依赖健康提醒，正常不输出；版本缺失/不符则可见提示修复并注入保守Shell safety上下文，失败仍不阻塞。没有把故障当作安全或允许。本轮112项完整测试覆盖managed/native健康、缺失、版本不符与超时，并新增配置开关、普通目标off放行和开关自保护等场景。仍须推新头、验证CI、重新取得精确40位SHA的Claude通过；未批准前不合并、不安装实际用户配置。最终测试与发布状态以交接记录、PR及任务进度为准。

@@ -2,9 +2,9 @@
 
 减少 Claude Code 离席时的例行提问和等待，保留真正需要授权的边界。
 
-> **English:** Presence-gated Claude Code hooks: answer routine questions, bound optional-offer continuations, and deny pending permissions while away. No automatic approval of destructive operations or plans. Existing shell guards and background-task redirects remain active. New automatic decisions fail open; legacy rewrite/redirect auditing is best effort.
+> **English:** Presence-gated Claude Code hooks: answer routine questions, bound optional-offer continuations, and deny pending permissions while away. No automatic approval of destructive operations or plans. Existing shell guards and background-task redirects remain active. Owner decisions require successful private audit; protective rewrite/redirect/config denials use best-effort audit. Hook/runtime failures still fail open.
 
-解析、配置保护和分发已改用现成基础；验证与发布状态见[交接记录](docs/HANDOFF.md)。本轮 Python 3.9 与 3.14 各通过 102 项确定性测试，尚未验证真实 Desktop/手机端到端效果。背景见[原研究](docs/RESEARCH.md)，本轮逐组件选型和固定来源见[复用报告](docs/REUSE.md)。
+解析、配置保护和分发已改用现成基础；验证与发布状态见[交接记录](docs/HANDOFF.md)。外部复查要求的四项修改已落实；修订后在 Python 3.9 与 3.14 各通过 112 项确定性测试，待新头CI与匹配SHA的再次复查。尚未验证真实 Desktop/手机端到端效果。背景见[原研究](docs/RESEARCH.md)，本轮逐组件选型和固定来源见[复用报告](docs/REUSE.md)。
 
 ## 为什么需要
 
@@ -26,8 +26,9 @@
 | 组件 | 作用 |
 |---|---|
 | [`hooks/bash_guard.py`](hooks/bash_guard.py) | 使用 shfmt JSON AST 识别 Bash 执行节点和变量结构，再应用本项目的安全改写政策；拒绝时给出具体写法 |
-| 配置保护 hook | 从 MIT config-guard 改编，拦截已知配置、hook、插件文件与配置 CLI 的修改；只 deny，先脱敏审计 |
-| 官方插件入口 | plugin + marketplace 复用相同 hooks；SessionStart 注入同一规则文件；与 managed 安装互斥 |
+| 配置保护 hook | 从 MIT config-guard 改编，拦截已知配置、hook、插件文件与配置 CLI 的修改；只 deny，先尝试脱敏审计；日志失败仍保留保护拒绝 |
+| 官方插件入口 | plugin + marketplace 复用相同 hooks；SessionStart 注入同一规则文件并检查依赖健康；与 managed 安装互斥 |
+| SessionStart 依赖健康检查 | managed/native 两入口检查固定 shfmt 版本；健康不输出，缺失/版本不符时给出修复提示和更保守的 Shell safety 上下文 |
 | [`hooks/spawn_task_redirect.py`](hooks/spawn_task_redirect.py) | 拒绝创建分支任务卡片，让 Claude 改用后台子代理在独立 worktree 里做。做完由主会话合并或删除，分支不会留着 |
 | [`hooks/unattended.py`](hooks/unattended.py) | 仅离席时：低风险 AskUserQuestion 填推荐项/第一项；窄范围结尾反问触发有限 Stop 续跑；PermissionRequest 与 ExitPlanMode 拒绝并延期处理 |
 | [`rules/CLAUDE.md`](rules/CLAUDE.md) | 把同样的规则写给 Claude，让它一开始就写对。hook 只是兜底 |
@@ -51,7 +52,7 @@
 
 ### 决策记录
 
-新增无人值守 hook 的每次自动回答、拒绝和强制继续都先追加到配置目录的 `unattended-decisions.jsonl`（默认 `~/.claude/unattended-decisions.jsonl`），成功后才输出决定。文件权限 `0600`，时间为 UTC，字段为 `time/session/type/summary/selected/content_sha256`。不存原始问题、命令、路径、选项文字；自动答案记录问题/选项 SHA-256、从 1 开始的选项索引和推荐标志，可结合对应会话原文核对。新增自动决定审计失败不介入。原有 Bash 改写和分支任务重定向也记录，但审计尽力而为，失败仍输出原来的 deny；重定向收到非 JSON 输入也保持拒绝，不因日志故障恢复弹窗。
+新增无人值守 hook 的每次自动回答、拒绝和强制继续都先追加到配置目录的 `unattended-decisions.jsonl`（默认 `~/.claude/unattended-decisions.jsonl`），成功后才输出决定。文件权限 `0600`，时间为 UTC，字段为 `time/session/type/summary/selected/content_sha256`。不存原始问题、命令、路径、选项文字；自动答案记录问题/选项 SHA-256、从 1 开始的选项索引和推荐标志，可结合对应会话原文核对。新增自动决定审计失败不介入。Bash 改写、分支任务重定向和配置保护属于确定性保护拒绝：都先尝试记录，但审计尽力而为，失败仍输出原来的 deny；重定向收到非 JSON 输入也保持拒绝，不因日志故障恢复弹窗。
 
 按会话隔离的每回合 Stop 预算放在 `unattended-state/`，不跨会话复用。不自动清理审计或状态，卸载也保留，日志保留至少 **186 天**；自行备份时也需遵守保留期。日志不加密，勿原样公开。
 
@@ -84,7 +85,7 @@
 
 ## 安装
 
-默认使用 Python 安装器，要求 Python 3.9+ 和 Claude Code。安装器从 [shfmt 官方 v3.14.1 release](https://github.com/mvdan/sh/releases/tag/v3.14.1) 下载当前平台的独立二进制，校验固定 SHA256 后放到配置目录的 `tools/shfmt/shfmt`；**不用安装 Rust、Node 或 Go**。支持的资产与摘要见[复用报告](docs/REUSE.md#第三方实验前来源版本与校验计划)。hooks 运行时不联网，缺少 parser、超时或解析失败时不介入。
+默认使用 Python 安装器，要求 Python 3.9+ 和 Claude Code。安装器从 [shfmt 官方 v3.14.1 release](https://github.com/mvdan/sh/releases/tag/v3.14.1) 下载当前平台的独立二进制，校验固定 SHA256 后放到配置目录的 `tools/shfmt/shfmt`；**不用安装 Rust、Node 或 Go**。支持的资产与摘要见[复用报告](docs/REUSE.md#第三方实验前来源版本与校验计划)。hooks 运行时不联网；parser 依赖的分析缺失、超时或解析失败时不介入。SessionStart 在 parser 缺失或版本不是固定版本时通过 `systemMessage` 提示运行 `install.py` 修复，并用 `additionalContext` 告知 Claude 该层保护暂不可用、严格遵守 Shell safety；不会因此阻塞会话或自动联网修复。健康时检查本身没有输出。
 
 ```bash
 git clone https://github.com/deepstrategy-vip/claude-code-unattended.git
@@ -103,6 +104,7 @@ python3 install.py
 | `--no-push` | 不打开手机推送 |
 | `--claude-dir DIR` | 指定配置目录，默认 `$CLAUDE_CONFIG_DIR` 或 `~/.claude` |
 | `--uninstall` | 移除 managed hooks、settings 条目与规则块；保留个人正文和审计 |
+| `--config-guard on\|off` | 配置保护的负责人开关，默认on；写入unattended-config.json，不提供环境变量覆盖 |
 | `--idle-seconds N` | 本机空闲阈值1–86400秒，默认300；更新未指定时保留已有值 |
 | `--mode auto\|off\|away` | 默认auto；off关闭新增自动处理，away显式始终视为离席 |
 | `--max-stop-continuations N` | 每个人类回合Stop预算1–20，默认3 |
@@ -140,14 +142,18 @@ python3 install.py --prepare-plugin
 
 ## 配置保护的范围
 
-配置守卫从现成config-guard的分类表、路径解析和CLI变更识别移植，使用Python标准库；Bash复用同一shfmt AST。它保护已知settings、hooks、MCP/插件配置及本产品实际配置/安装路径，区分读取和修改，并处理直接文件工具的symlink。它不自动批准、不提供ask或上游allow逃生环境开关；输出deny前必须成功写入不含原文的结构化审计，审计失败则不介入。
+配置守卫从现成config-guard分类表、路径解析和CLI变更识别移植，使用Python标准库；Bash复用同一shfmt AST。默认high保护已知settings、hooks、MCP/插件配置及本产品实际配置/安装路径，区分读取和修改，并处理直接文件工具的symlink。**默认不保护用户级CLAUDE.md，也不一刀切保护所有项目CLAUDE.md**；hook manifest限定为`hooks/hooks.json`，普通`src/hooks.json`可以正常编辑，减少日常误拦。
 
-这是纵深防御。动态变量、解释器程序、别名/函数、外部同用户进程及未覆盖写入机制仍有缺口；fail-open本身也不能保证防篡改。不会为了保护hook而扩大权限、切换模式或默认封锁所有项目CLAUDE.md。完整选型、误判/漏判和许可差异见[复用报告](docs/REUSE.md)。
+配置保护只deny，不自动批准、不提供ask或上游allow逃生环境开关。确定性保护拒绝先尝试写不含原文的结构化审计；即使日志失败仍deny，避免因为审计故障让Claude关闭护栏。这与替使用者回答问题、拒绝计划/权限及强制续跑不同：后者仍须成功写入审计才输出决定。解析/运行异常继续fail-open。
+
+负责人可在`unattended-config.json`设置`"config_guard": "on"`或`"off"`，默认on；也可亲自运行`python3 install.py --config-guard off`或`--config-guard on`。不支持环境变量关闭。off时普通受保护目标不再由此守卫拒绝，但开关配置文件及已识别的自我禁用尝试仍受保护；Claude收到拒绝应继续独立工作，把需要调整之处交给负责人手动处理、Codex处理，或由负责人在终端运行安装器，不能自行执行停用命令绕过拒绝。
+
+这是逻辑上的负责人控制，不是操作系统访问控制或不可逆锁定。动态变量、解释器程序、别名/函数、外部同用户进程及未覆盖写入机制仍有缺口；fail-open也不能保证防篡改。不会为了保护hook而扩大权限或切换模式。完整选型、误判/漏判和许可差异见[复用报告](docs/REUSE.md)。
 
 ## 设计原则
 
 - **不绕过安全检查**。这个项目只是让命令写成能通过检查的样子，真正的保护仍然由 Claude Code 内置检查负责。
-- **出错就放行（fail-open）**。新增自动决策解析或审计异常时不介入；原有改写/重定向守卫的审计失败仍保留原 deny，重定向也兼容无效输入。
+- **出错就放行（fail-open）**。解析或运行异常不介入；替使用者决定的审计失败也不介入。确定性改写/重定向/配置保护拒绝的日志尽力而为，审计失败仍保留deny；重定向兼容无效输入。
 - **拒绝时给出具体改写方法**，而不是只说"不行"，这样 Claude 能一次改对。
 - **解析与政策分开**。shell语法交给成熟shfmt AST，风险分类与本项目改写边界仍是有限规则；AST解析成功不证明命令安全。
 
@@ -168,7 +174,7 @@ python3 install.py --prepare-plugin
 CCU_SHFMT=/path/to/verified/shfmt python3 -m unittest discover -s tests -v
 ```
 
-CI准备同一官方固定摘要的二进制，测试中离线导入临时配置目录；不会安装到实际用户配置。本轮 Python 3.9 与 3.14 各通过102项，包括原51项全部场景、48条原shell分类样例、新AST/config-guard/插件/迁移与逐字节正文保留测试。协议测试不等于Desktop/手机端到端验收，CI与发布结果见[交接记录](docs/HANDOFF.md)。
+CI准备同一官方固定摘要的二进制，测试中离线导入临时配置目录；不会安装到实际用户配置。复查前提交在 Python 3.9 与 3.14 各通过102项，包括原51项全部场景、48条原shell分类样例、新AST/config-guard/插件/迁移与逐字节正文保留测试。四项复查修改后已完整重跑，Python 3.9与3.14各112项通过；新增覆盖managed/plugin健康、缺失、版本不符与超时提示，以及配置开关和保护拒绝日志故障场景。102项仅是旧头历史结果。协议测试不等于Desktop/手机端到端验收，CI与发布结果见[交接记录](docs/HANDOFF.md)。
 
 ## 致谢与来源
 

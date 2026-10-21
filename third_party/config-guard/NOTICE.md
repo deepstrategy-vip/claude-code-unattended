@@ -13,9 +13,16 @@ are ported to Python. Tests adapt upstream scenarios from
 Local changes: use shfmt AST commands/redirections instead of matching an entire
 command string; resolve missing nested paths; protect actual configuration and
 plugin locations and known location environment aliases; recognize static command prefixes, git restore/checkout and
-chmod/chown; require successful private, content-hash-only audit before denial.
+chmod/chown; attempt private, content-hash-only audit before denial. Logging
+failure keeps a known protective denial, matching the existing rewrite guards;
+unattended owner decisions retain their separate audit-before-decision rule.
 No Node runtime, network calls, upstream raw-target logging, ask mode or
-`CONFIG_GUARD_ALLOW` escape hatch is used. Failures produce no decision.
+`CONFIG_GUARD_ALLOW` escape hatch is used. The owner may disable ordinary
+configuration guarding with the JSON `config_guard: "off"` setting. That JSON
+file and static installer toggle commands remain protected against Claude's
+tool calls; there is no environment-variable override. Default high guarding
+allows user instruction files and unrelated bare `hooks.json` files, and limits
+generic hook manifests to paths ending in `hooks/hooks.json`.
 
 Known limits: this is not an OS security boundary. Unknown tools, external
 scripts, interpreter code, dynamic variable paths and runtime directory changes
@@ -25,5 +32,6 @@ Common copy/link grammar checks only destinations; unfamiliar options retain
 conservative operand checks and may include read sources. Moving a protected
 source is still mutation. Existing native permission and
 destructive-command guards remain necessary. Fail-open intentionally means
-parser/runtime/audit failures do not enforce this guard. Audit records and
+input/configuration/parser/runtime failures do not enforce this guard. Audit
+failure alone does not remove a known denial. Audit records and
 session state are not rotated or removed; retain them for at least 186 days.

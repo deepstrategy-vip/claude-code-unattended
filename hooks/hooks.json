@@ -1,6 +1,6 @@
 {
   "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" context", "timeout": 10}]}],
+    "SessionStart": [{"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" context", "timeout": 10}, {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" health_check", "timeout": 10}]}],
     "PreToolUse": [
       {"matcher": "Bash|Edit|MultiEdit|Write", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" config_guard", "timeout": 10}]},
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" bash_guard", "timeout": 10}]},

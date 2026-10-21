@@ -57,7 +57,6 @@ class ConfigGuardTest(unittest.TestCase):
             (".claude/hooks/guard.py", "hook-script"),
             (".claude/hooks/new/deep/guard.py", "hook-script"),
             ("plugins/x/hooks/hooks.json", "hooks-manifest"),
-            ("hooks.json", "hooks-manifest"),
             (".mcp.json", "mcp-config"),
             (".claude-plugin/marketplace.json", "plugin-manifest"),
             ("plugins/x/.claude-plugin/plugin.json", "plugin-manifest"),
@@ -69,7 +68,7 @@ class ConfigGuardTest(unittest.TestCase):
     def test_upstream_unrelated_files_and_default_high(self):
         for path in ["src/app.py", "package.json", "config/settings.json", "src/webhooks.json",
                      "app/hooks.js", "src/hooks/useAuth.ts", ".claude/README.md",
-                     "CLAUDE.md", ".claude/rules/style.md", ""]:
+                     "CLAUDE.md", ".claude/rules/style.md", "src/hooks.json", "hooks.json", ""]:
             with self.subTest(path=path):
                 self.assertIsNone(guard.check_file_path(path, str(self.cwd)))
         self.assertIsNone(guard.check_file_path(".mcp.json", str(self.cwd), "critical"))
@@ -77,12 +76,14 @@ class ConfigGuardTest(unittest.TestCase):
 
     def test_actual_config_files_and_runtime(self):
         for path in [self.cdir, self.cdir / "settings.json", self.cdir / "settings.local.json",
-                     self.cdir / "CLAUDE.md", self.cdir / "unattended-config.json",
+                     self.cdir / "unattended-config.json",
                      self.cdir / "unattended-decisions.jsonl", self.cdir / "hooks/new.py",
                      self.cdir / "tools/shfmt/shfmt", self.cdir / "unattended-state/session.json"]:
             with self.subTest(path=path):
                 self.assertBlocked(str(path))
         self.assertIsNone(guard.check_file_path(str(self.cdir / "notes.txt")))
+        self.assertIsNone(guard.check_file_path(str(self.cdir / "CLAUDE.md")))
+        self.assertBlocked(str(self.cdir / "CLAUDE.md"), "claude-md", safety_level="strict")
         self.assertBlocked(str(self.cdir / "plugins/cache/plugin/hooks/guard.py"))
         self.assertBlocked(str(self.cdir / "rules/unattended.md"))
 
@@ -124,9 +125,10 @@ class ConfigGuardTest(unittest.TestCase):
         self.assertEqual(row["type"], "config-protected")
         self.assertEqual(audit.stat().st_mode & 0o777, 0o600)
 
-    def test_audit_false_returns_no_decision(self):
+    def test_audit_false_keeps_protective_deny(self):
         with patch.object(guard, "record_decision", return_value=False):
-            self.assertIsNone(guard.handle(self.payload(file_path=".claude/settings.json")))
+            result = guard.handle(self.payload(file_path=".claude/settings.json"))
+            self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def run_process(self, payload, **env):
         result = subprocess.run([sys.executable, str(HOOKS / "config_guard.py")],
@@ -136,9 +138,10 @@ class ConfigGuardTest(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         return json.loads(result.stdout) if result.stdout else None
 
-    def test_audit_error_fails_open_without_output(self):
+    def test_audit_error_keeps_protective_deny_without_error_output(self):
         (self.cdir / "unattended-decisions.jsonl").mkdir()
-        self.assertIsNone(self.run_process(self.payload(file_path=".claude/settings.json")))
+        result = self.run_process(self.payload(file_path=".claude/settings.json"))
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_invalid_payloads_fail_open(self):
         for payload in ["not json", "null", "[]", "{}", self.payload(file_path=24),
@@ -149,9 +152,70 @@ class ConfigGuardTest(unittest.TestCase):
     def test_no_ask_allow_override_or_presence_dependency(self):
         result = self.run_process(self.payload(file_path=".claude/settings.json"),
                                   CONFIG_GUARD_ALLOW="true", HOOK_ASK_CRITICAL="true",
-                                  HOOK_SAFETY_LEVEL="critical", CCU_MODE="off")
+                                  HOOK_SAFETY_LEVEL="critical", CCU_MODE="off",
+                                  CCU_CONFIG_GUARD="off")
         self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
         self.assertNotIn("updatedInput", result["hookSpecificOutput"])
+
+    def write_config(self, value):
+        (self.cdir / "unattended-config.json").write_text(json.dumps(value))
+
+    def test_missing_config_and_missing_field_default_on(self):
+        for config in [None, {}, {"mode": "off"}, {"config_guard": "on"}]:
+            if config is not None:
+                self.write_config(config)
+            result = self.run_process(self.payload(file_path=".claude/settings.json"))
+            self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_invalid_guard_config_fails_open(self):
+        for value in [[], None, "off", {"config_guard": "invalid"}, {"config_guard": False},
+                      {"config_guard": []}]:
+            with self.subTest(value=value):
+                self.write_config(value)
+                self.assertIsNone(self.run_process(self.payload(file_path=".claude/settings.json")))
+        (self.cdir / "unattended-config.json").write_text("invalid JSON")
+        self.assertIsNone(self.run_process(self.payload(file_path=".claude/settings.json")))
+
+    def test_off_allows_normal_mutations_but_not_switch_file(self):
+        self.write_config({"config_guard": "off"})
+        for name in ("Edit", "Write", "MultiEdit"):
+            for path in [".claude/settings.json", ".claude/hooks/guard.py", "plugins/x/hooks/hooks.json",
+                         str(self.cdir / "settings.json")]:
+                with self.subTest(name=name, path=path):
+                    self.assertIsNone(self.run_process(self.payload(name, file_path=path)))
+            result = self.run_process(self.payload(name, file_path=str(self.cdir / "unattended-config.json")))
+            self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+        for command in ["rm .claude/hooks/guard.py", "echo x > .claude/settings.json",
+                        "claude plugin disable example", "rm plugins/x/hooks/hooks.json"]:
+            with self.subTest(command=command):
+                self.assertIsNone(self.run_process(self.payload("Bash", command=command)))
+
+    def test_switch_mutations_deny_in_both_modes_with_symlink_alias(self):
+        (self.cwd / "alias").symlink_to(self.cdir, target_is_directory=True)
+        for mode in ("on", "off"):
+            self.write_config({"config_guard": mode})
+            for command in ['echo off > "$CCU_CONFIG_DIR/unattended-config.json"',
+                            'rm "$CCU_CONFIG_DIR/unattended-config.json"',
+                            "sed -i 's/on/off/' alias/unattended-config.json",
+                            "python3 install.py --config-guard off",
+                            "python3 -u install.py --config-guard=off",
+                            "env MODE=x python3 ./install.py --config-guard on",
+                            "./install.py --config-guard off"]:
+                with self.subTest(mode=mode, command=command):
+                    result = self.run_process(self.payload("Bash", command=command))
+                    self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+            result = self.run_process(self.payload(file_path="alias/unattended-config.json"))
+            self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_normal_instruction_and_nonmanifest_file_edits_pass(self):
+        for path in ["src/hooks.json", "hooks.json", str(self.cdir / "CLAUDE.md")]:
+            with self.subTest(path=path):
+                self.assertIsNone(self.run_process(self.payload(file_path=path)))
+        for command in ["echo x > src/hooks.json", "rm hooks.json", 'echo x >> "$CCU_CONFIG_DIR/CLAUDE.md"',
+                        "echo 'python3 install.py --config-guard off'", "python3 install.py --help --config-guard off",
+                        "python3 unrelated.py --config-guard off"]:
+            with self.subTest(command=command):
+                self.assertIsNone(self.run_process(self.payload("Bash", command=command)))
 
     def bash(self, command):
         return guard.check_bash_command(command, str(self.cwd))

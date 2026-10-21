@@ -11,7 +11,7 @@ import shlex
 import sys
 from pathlib import Path
 
-SCRIPTS = ("unattended.py", "bash_guard.py", "spawn_task_redirect.py", "config_guard.py")
+SCRIPTS = ("unattended.py", "bash_guard.py", "spawn_task_redirect.py", "config_guard.py", "health_check.py")
 
 
 def managed(settings, root):

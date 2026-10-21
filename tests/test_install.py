@@ -49,6 +49,8 @@ class InstallTest(unittest.TestCase):
         self.assertNotIn("matcher", s["hooks"]["Stop"][0])
         self.assertEqual(len(s["hooks"]["PermissionRequest"]), 1)
         self.assertEqual(len(s["hooks"]["UserPromptSubmit"]), 1)
+        self.assertEqual(len(s["hooks"]["SessionStart"]), 1)
+        self.assertNotIn("matcher", s["hooks"]["SessionStart"][0])
         self.assertNotIn("matcher", s["hooks"]["UserPromptSubmit"][0])
         self.assertNotIn("askUserQuestionTimeout", s)
         self.assertNotIn("agentPushNotifEnabled", s)
@@ -104,7 +106,7 @@ class InstallTest(unittest.TestCase):
                          "--question-timeout", "60s", "--agent-push", "--proactive")
         self.run_install()
         config = json.loads((self.dir / "unattended-config.json").read_text())
-        self.assertEqual(config, {"idle_seconds": 600, "mode": "off", "max_stop_continuations": 2})
+        self.assertEqual(config, {"idle_seconds": 600, "mode": "off", "max_stop_continuations": 2, "config_guard": "on"})
         s = self.settings()
         self.assertEqual(s["askUserQuestionTimeout"], "60s")
         self.assertTrue(s["agentPushNotifEnabled"])
@@ -116,6 +118,7 @@ class InstallTest(unittest.TestCase):
         s = self.settings()
         s["hooks"]["Stop"] = [{"hooks": [{"type": "command", "command": "custom-stop"}]}]
         s["hooks"]["PermissionRequest"] = [OTHER_HOOK]
+        s["hooks"]["SessionStart"] = [OTHER_HOOK]
         (self.dir / "settings.json").write_text(json.dumps(s))
         self.run_install()
         audit = self.dir / "unattended-decisions.jsonl"
@@ -123,6 +126,7 @@ class InstallTest(unittest.TestCase):
         self.run_install("--uninstall")
         self.assertEqual(self.settings()["hooks"]["Stop"], s["hooks"]["Stop"])
         self.assertEqual(self.settings()["hooks"]["PermissionRequest"], [OTHER_HOOK])
+        self.assertEqual(self.settings()["hooks"]["SessionStart"], [OTHER_HOOK])
         self.assertEqual(audit.read_text(), '{"keep": "history"}\n')
         self.assertFalse((self.dir / "hooks" / "unattended.py").exists())
 
@@ -252,6 +256,31 @@ class InstallTest(unittest.TestCase):
                                     capture_output=True, text=True, check=True, timeout=5)
             self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
         self.assertNotIn("private-value", (self.dir / "unattended-decisions.jsonl").read_text())
+
+    def test_owner_config_guard_option_persists_without_environment_override(self):
+        self.run_install("--config-guard", "off")
+        self.run_install()
+        path = self.dir / "unattended-config.json"
+        self.assertEqual(json.loads(path.read_text())["config_guard"], "off")
+        self.run_install("--config-guard", "on")
+        self.assertEqual(json.loads(path.read_text())["config_guard"], "on")
+
+    def test_installed_session_health_healthy_missing_and_wrong_version(self):
+        self.run_install()
+        command = shlex.split(self.settings()["hooks"]["SessionStart"][0]["hooks"][0]["command"])
+        env = {k: v for k, v in os.environ.items() if not k.startswith("CCU_") and k != "CLAUDE_CONFIG_DIR"}
+        def invoke():
+            result = subprocess.run(command, input='{"hook_event_name":"SessionStart"}', env=env,
+                                    capture_output=True, text=True, check=True, timeout=5)
+            self.assertEqual(result.stderr, "")
+            return json.loads(result.stdout) if result.stdout else None
+        self.assertIsNone(invoke())
+        binary = self.dir / "tools/shfmt/shfmt"
+        binary.unlink()
+        self.assertIn("systemMessage", invoke())
+        binary.write_text("#!/bin/sh\nprintf 'v0.0.0\\n'\n")
+        binary.chmod(0o755)
+        self.assertIn("Shell safety", invoke()["hookSpecificOutput"]["additionalContext"])
 
 
 class RedirectHookTest(unittest.TestCase):
