@@ -1,10 +1,10 @@
 # claude-code-unattended
 
-让 Claude Code 在你不在电脑边时也能一直跑下去，不被弹窗卡住。
+减少 Claude Code 离席时的例行提问和等待，保留真正需要授权的边界。
 
 > **English:** Presence-gated Claude Code hooks: answer routine questions, bound optional-offer continuations, and deny pending permissions while away. No automatic approval of destructive operations or plans. Existing shell guards and background-task redirects remain active. New automatic decisions fail open; legacy rewrite/redirect auditing is best effort.
 
-**当前边界：已验证 Python 协议、安装器与本机 HID 检测，尚未验证真实 Desktop/手机端到端效果。** 完整调研和来源见 [研究报告](docs/RESEARCH.md)，实施与验收状态见 [交接记录](docs/HANDOFF.md)。
+解析、配置保护和分发已改用现成基础；验证与发布状态见[交接记录](docs/HANDOFF.md)。本轮 Python 3.9 与 3.14 各通过 102 项确定性测试，尚未验证真实 Desktop/手机端到端效果。背景见[原研究](docs/RESEARCH.md)，本轮逐组件选型和固定来源见[复用报告](docs/REUSE.md)。
 
 ## 为什么需要
 
@@ -25,7 +25,9 @@
 
 | 组件 | 作用 |
 |---|---|
-| [`hooks/bash_guard.py`](hooks/bash_guard.py) | Bash 命令执行前检查。发现会触发上述检查的写法，直接拒绝，并把具体改写方法告诉 Claude。Claude 改完重跑，不弹窗 |
+| [`hooks/bash_guard.py`](hooks/bash_guard.py) | 使用 shfmt JSON AST 识别 Bash 执行节点和变量结构，再应用本项目的安全改写政策；拒绝时给出具体写法 |
+| 配置保护 hook | 从 MIT config-guard 改编，拦截已知配置、hook、插件文件与配置 CLI 的修改；只 deny，先脱敏审计 |
+| 官方插件入口 | plugin + marketplace 复用相同 hooks；SessionStart 注入同一规则文件；与 managed 安装互斥 |
 | [`hooks/spawn_task_redirect.py`](hooks/spawn_task_redirect.py) | 拒绝创建分支任务卡片，让 Claude 改用后台子代理在独立 worktree 里做。做完由主会话合并或删除，分支不会留着 |
 | [`hooks/unattended.py`](hooks/unattended.py) | 仅离席时：低风险 AskUserQuestion 填推荐项/第一项；窄范围结尾反问触发有限 Stop 续跑；PermissionRequest 与 ExitPlanMode 拒绝并延期处理 |
 | [`rules/CLAUDE.md`](rules/CLAUDE.md) | 把同样的规则写给 Claude，让它一开始就写对。hook 只是兜底 |
@@ -33,7 +35,7 @@
 
 ### 何时视为离席
 
-默认 `auto` 模式在 macOS 用 `ioreg -r -c IOHIDSystem -d 1` 读取本机输入空闲时间，**连续 300 秒**后才介入。这个阈值为读屏/短暂离席留出余量；实测单次探测约 17 ms，最多等待两秒。近期有输入时保持原来的提问和权限流程；非 macOS、空结果、超时、解析/配置错误都不介入。多个 idle 值取最小值。
+默认 `auto` 模式在 macOS 用 `ioreg -r -c IOHIDSystem -d 1` 读取本机输入空闲时间，**连续 300 秒**后才介入。这个阈值为读屏/短暂离席留出余量；探测最多等待两秒。近期有输入时保持原来的提问和权限流程；非 macOS、空结果、超时、解析/配置错误都不介入。多个 idle 值取最小值。
 
 这是本机输入信号：读屏不动键鼠可能被视为离席，手机/Remote Control 在线也不代表本机有输入。hook 只在事件发生时采样一次，**已经打开的弹窗不会在之后超过阈值时被补答**。可显式选择 `away`（专用无人值守会话，无条件视为离席）或 `off`（关闭新增自动处理）；既有 Bash/分支任务 hook 仍然工作。
 
@@ -65,7 +67,7 @@
 | `find $D -delete`、`find $D -exec rm {} +` | 同上，变量加 `:?` |
 | `bash -c "..."`、`zsh -lc '...'`、`eval "$X"` | 直接写命令；切目录用 `( cd 目录 && 命令 )` 或 `git -C` / `go -C`；后台任务用 Bash 工具的 `run_in_background`，或者写成脚本文件再执行 |
 
-**不拦**：引号里的文字（`grep "bash -c"`、commit message）、heredoc 内容（用 heredoc 写脚本文件没问题）、`git rm $X`、`python3 -c`、`ssh -c` 等。
+**数据与执行分开**：grep 搜索词、commit message、单引号 heredoc 等纯文本不当作执行；命令替换（包括未加引号 heredoc 中的命令替换）仍会执行，应检查其 AST。`git rm $X`、`python3 -c`、`ssh -c` 不属于这套 shell 改写政策的完整分类范围，不能据此认为它们安全。
 
 **放行口**：确实只能用 `-c` 的场景（比如 `docker exec 容器 sh -c ...`），在命令末尾加注释 `# allow-shell-c`。这种情况下内置检查仍可能弹窗。
 
@@ -82,47 +84,72 @@
 
 ## 安装
 
+默认使用 Python 安装器，要求 Python 3.9+ 和 Claude Code。安装器从 [shfmt 官方 v3.14.1 release](https://github.com/mvdan/sh/releases/tag/v3.14.1) 下载当前平台的独立二进制，校验固定 SHA256 后放到配置目录的 `tools/shfmt/shfmt`；**不用安装 Rust、Node 或 Go**。支持的资产与摘要见[复用报告](docs/REUSE.md#第三方实验前来源版本与校验计划)。hooks 运行时不联网，缺少 parser、超时或解析失败时不介入。
+
 ```bash
 git clone https://github.com/deepstrategy-vip/claude-code-unattended.git
 cd claude-code-unattended
 python3 install.py
 ```
 
-`install.py` 会：
-- 把三个 hook 脚本复制到配置目录 `hooks/`，注册 PreToolUse、PermissionRequest、Stop 和 UserPromptSubmit；
-- 把规则写进 `~/.claude/CLAUDE.md`，用标记注释包起来，不会动你自己写的内容；
-- 打开 `inputNeededNotifEnabled`，保存 `unattended-config.json`；默认不覆盖提问超时、主动推送或输出风格。
+`install.py` 复制 hooks、共享适配和许可证，注册 Bash/配置保护、分支重定向、无人值守的相应事件；将规则写入配置目录的 `CLAUDE.md` 标记块，并保留块外原文。它保存 `unattended-config.json`，默认打开 `inputNeededNotifEnabled`，不默认覆盖提问超时、主动推送或输出风格。更新使用 `git pull` 后重新运行安装命令；已有 Desktop 会话可能缓存配置，安装后新开会话。
 
-重复运行是安全的，不会产生重复条目。改动任何文件之前，都会先备份一份 `.bak-时间戳`。
+重复安装幂等，不重复注册；覆盖或删除已有文件前备份。卸载仅删除本产品管理项，不删审计/状态，通知、超时和风格偏好保留，避免覆盖使用者后续改动。
 
 | 参数 | 作用 |
 |---|---|
+| `--shfmt PATH` | 离线导入官方固定版本二进制，仍须匹配对应平台的固定摘要；不接受任意同版本构建 |
+| `--prepare-plugin` | 仅准备 parser、许可证和配置，不写 settings/CLAUDE.md；随后显式安装插件 |
 | `--no-push` | 不打开手机推送 |
 | `--claude-dir DIR` | 指定配置目录，默认 `$CLAUDE_CONFIG_DIR` 或 `~/.claude` |
-| `--uninstall` | 卸载：移除 hook、settings 条目和 CLAUDE.md 里的规则块（`inputNeededNotifEnabled` 保持不动） |
-| `--idle-seconds N` | 本机空闲阈值，1–86400 秒，默认 300；更新未指定时保留已有值 |
-| `--mode auto\|off\|away` | 默认 auto；off 停用新增处理，away 显式始终视为离席 |
-| `--max-stop-continuations N` | 每个人类回合 Stop 预算，1–20，默认 3；预算耗尽后正常结束 |
-| `--question-timeout 60s\|5m\|10m\|never` | 可选全局 askUserQuestionTimeout；Remote Control 连接时不计时 |
-| `--agent-push` | 可选开启 agentPushNotifEnabled，让 Claude 可主动发手机通知 |
-| `--proactive` | 可选设置全局 outputStyle=Proactive；不会改变权限模式 |
+| `--uninstall` | 移除 managed hooks、settings 条目与规则块；保留个人正文和审计 |
+| `--idle-seconds N` | 本机空闲阈值1–86400秒，默认300；更新未指定时保留已有值 |
+| `--mode auto\|off\|away` | 默认auto；off关闭新增自动处理，away显式始终视为离席 |
+| `--max-stop-continuations N` | 每个人类回合Stop预算1–20，默认3 |
+| `--question-timeout 60s\|5m\|10m\|never` | 显式设置提问超时；Remote Control连接时不计时 |
+| `--agent-push` | 显式开启主动手机通知 |
+| `--proactive` | 显式设置全局outputStyle=Proactive，不改变权限模式 |
 
-运行时环境变量优先于配置：`CCU_MODE`、`CCU_IDLE_SECONDS`、`CCU_MAX_STOP_CONTINUATIONS`。`CCU_CONFIG_DIR` 可指定 hooks 的配置/日志根目录；通常不必设置，默认使用 `$CLAUDE_CONFIG_DIR` 或脚本所属配置目录。非法配置静默回到原流程。卸载保留通知/超时/风格设置和审计历史，避免覆盖后续个人改动。
+离线安装或隔离验证可先取得并校验官方二进制，再运行：
 
-先用临时目录验证，例如 `python3 install.py --claude-dir /tmp/example-claude-config --mode away --no-push`，不会安装到默认配置。
+```bash
+python3 install.py --claude-dir /tmp/ccu-example --mode away --no-push --shfmt /path/to/verified/shfmt
+```
 
-更新：`git pull && python3 install.py`
+运行时覆盖包括 `CCU_MODE`、`CCU_IDLE_SECONDS`、`CCU_MAX_STOP_CONTINUATIONS`；`CCU_CONFIG_DIR`可选择配置/审计根。`CCU_SHFMT`主要用于隔离测试指定 parser，不是自动下载开关。非法配置回到原流程。
 
-安装后新开会话，确保 hooks 和规则都加载；已有 Desktop 会话可能缓存配置。
+### 可选：使用官方插件与marketplace格式
 
-要求：Python 3.9+，Claude Code（命令行或桌面版）。分支任务那部分只对桌面版 Code 标签页有意义，命令行里没有这个卡片。
+插件与managed注册只能选一个。已用安装器的用户先显式卸载managed入口，再准备依赖：
+
+```bash
+python3 install.py --uninstall
+python3 install.py --prepare-plugin
+```
+
+然后在Claude Code中运行：
+
+```text
+/plugin marketplace add deepstrategy-vip/claude-code-unattended
+/plugin install claude-code-unattended@claude-code-unattended
+```
+
+插件用SessionStart的`additionalContext`读取同一份规则，不修改用户CLAUDE.md。parser、配置、审计与预算留在配置根，不依赖插件版本缓存；卸载插件后继续保留审计至少186天。若已有managed注册，插件入口不重复执行；managed安装器发现同名插件启用时拒绝重复安装。自定义配置根时，准备命令和会话运行环境必须使用同一根。
+
+插件安装/卸载走Claude Code官方界面或CLI；依赖准备仍由本项目处理。要切回managed方式，先卸载或禁用插件，再运行`python3 install.py`。插件JSON和临时目录测试不代表真实Desktop已加载，产品效果仍需自然使用验证。
+
+## 配置保护的范围
+
+配置守卫从现成config-guard的分类表、路径解析和CLI变更识别移植，使用Python标准库；Bash复用同一shfmt AST。它保护已知settings、hooks、MCP/插件配置及本产品实际配置/安装路径，区分读取和修改，并处理直接文件工具的symlink。它不自动批准、不提供ask或上游allow逃生环境开关；输出deny前必须成功写入不含原文的结构化审计，审计失败则不介入。
+
+这是纵深防御。动态变量、解释器程序、别名/函数、外部同用户进程及未覆盖写入机制仍有缺口；fail-open本身也不能保证防篡改。不会为了保护hook而扩大权限、切换模式或默认封锁所有项目CLAUDE.md。完整选型、误判/漏判和许可差异见[复用报告](docs/REUSE.md)。
 
 ## 设计原则
 
 - **不绕过安全检查**。这个项目只是让命令写成能通过检查的样子，真正的保护仍然由 Claude Code 内置检查负责。
 - **出错就放行（fail-open）**。新增自动决策解析或审计异常时不介入；原有改写/重定向守卫的审计失败仍保留原 deny，重定向也兼容无效输入。
 - **拒绝时给出具体改写方法**，而不是只说"不行"，这样 Claude 能一次改对。
-- **用启发式判断，不是完整的 shell 解析器**。可能漏判或误判；误判时 Claude 换种写法就能过。
+- **解析与政策分开**。shell语法交给成熟shfmt AST，风险分类与本项目改写边界仍是有限规则；AST解析成功不证明命令安全。
 
 ## 还处理不了的
 
@@ -135,18 +162,24 @@ python3 install.py
 
 ## 测试
 
+先准备精确校验的shfmt二进制，然后指定其路径运行确定性测试：
+
 ```bash
-python3 -m unittest discover -s tests -v
+CCU_SHFMT=/path/to/verified/shfmt python3 -m unittest discover -s tests -v
 ```
 
-CI 在 Ubuntu 和 macOS、Python 3.9 和 3.12 上运行。
+CI准备同一官方固定摘要的二进制，测试中离线导入临时配置目录；不会安装到实际用户配置。本轮 Python 3.9 与 3.14 各通过102项，包括原51项全部场景、48条原shell分类样例、新AST/config-guard/插件/迁移与逐字节正文保留测试。协议测试不等于Desktop/手机端到端验收，CI与发布结果见[交接记录](docs/HANDOFF.md)。
 
-## 参考
+## 致谢与来源
 
-- Claude Code 官方文档：[Permission modes / Critical paths](https://code.claude.com/docs/en/permission-modes#critical-paths)、[Hooks](https://code.claude.com/docs/en/hooks)
-- [destructive_command_guard](https://github.com/Dicklesworthstone/destructive_command_guard)：区分"数据"和"执行"、拒绝时给替代写法
-- [karanb192/claude-code-hooks](https://github.com/karanb192/claude-code-hooks)：分级安全 hook、防止 agent 改自己的护栏配置
-- [claude-remote-approver](https://github.com/yuuichieguchi/claude-remote-approver)：用 PermissionRequest hook 加 ntfy 在手机上审批
+| 使用的现成项目 | 用在哪里、许可与固定来源 |
+|---|---|
+| [mvdan/sh / shfmt v3.14.1](https://github.com/mvdan/sh/releases/tag/v3.14.1) | 直接使用官方二进制输出JSON AST，替换手写shell解析；[BSD-3-Clause](https://github.com/mvdan/sh/blob/v3.14.1/LICENSE)，分发时保留版权和许可 |
+| [karanb192/claude-code-hooks](https://github.com/karanb192/claude-code-hooks/tree/57a28c7687305e4a9b9dd50490e9b3c552c71ca4) | 从[config-guard](https://github.com/karanb192/claude-code-hooks/blob/57a28c7687305e4a9b9dd50490e9b3c552c71ca4/plugins/config-guard/config-guard.js)改编Python路径/操作分类；[MIT](https://github.com/karanb192/claude-code-hooks/blob/57a28c7687305e4a9b9dd50490e9b3c552c71ca4/LICENSE)，保留原版权，未移植ask/allow override/原文日志 |
+| [Claude Code官方接口](https://code.claude.com/docs/en/plugins-reference) | 直接采用plugin/marketplace、SessionStart上下文和交互工具答案协议；Proactive作为显式风格选项；本项目不vendor官方循环插件代码 |
+| [froggeric/claude-smart-approval](https://github.com/froggeric/claude-smart-approval/tree/60b44fede472983f6dc730a4012f54422b54c102) | 参考shfmt AST遍历思路，未复制代码、自动审批、模型调用或学习规则；上游[MIT](https://github.com/froggeric/claude-smart-approval/blob/60b44fede472983f6dc730a4012f54422b54c102/LICENSE) |
+
+HID门控、低风险决策、deny-only权限/计划、有限Stop、脱敏先审计和Desktop分支卡片适配保留小范围自研：候选项目未同时满足授权、审计、故障放行和无需额外付费服务的约束。维护/许可/替代比较见[逐组件报告](docs/REUSE.md)。DCG未集成：当前[许可证带附加rider](https://github.com/Dicklesworthstone/destructive_command_guard/blob/v0.15.3/LICENSE)，故障处理政策也不匹配本项目，不把它归类为普通MIT。
 
 ## License
 

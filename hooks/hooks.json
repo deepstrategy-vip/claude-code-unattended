@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" context", "timeout": 10}]}],
+    "PreToolUse": [
+      {"matcher": "Bash|Edit|MultiEdit|Write", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" config_guard", "timeout": 10}]},
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" bash_guard", "timeout": 10}]},
+      {"matcher": "mcp__ccd_session__spawn_task", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" spawn_task_redirect", "timeout": 10}]},
+      {"matcher": "AskUserQuestion|ExitPlanMode", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" unattended", "timeout": 10}]}
+    ],
+    "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" unattended", "timeout": 10}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" unattended", "timeout": 10}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plugin_entry.py\" unattended", "timeout": 10}]}]
+  }
+}

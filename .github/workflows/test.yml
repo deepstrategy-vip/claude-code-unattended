@@ -17,4 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - run: python dependencies.py --claude-dir "${RUNNER_TEMP:?}/ccu-deps"
       - run: python -m unittest discover -s tests -v
+        env:
+          CCU_SHFMT: ${{ runner.temp }}/ccu-deps/tools/shfmt/shfmt

@@ -1,0 +1,13 @@
+{
+  "name": "claude-code-unattended",
+  "owner": {"name": "claude-code-unattended maintainers"},
+  "plugins": [
+    {
+      "name": "claude-code-unattended",
+      "source": "./",
+      "description": "Unattended hooks with bounded, audited decisions.",
+      "version": "0.2.0",
+      "license": "MIT"
+    }
+  ]
+}
