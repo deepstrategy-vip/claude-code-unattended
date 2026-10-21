@@ -134,7 +134,7 @@ def is_cli_write(words):
 
 
 def is_switch_command(words):
-    """Recognize the product installer's owner-only toggle, without execution."""
+    """Recognize owner-only installer controls, without executing the script."""
     if not words or not isinstance(words[0], str):
         return False
     executable = Path(words[0]).name.lower()
@@ -151,12 +151,8 @@ def is_switch_command(words):
         return False
     if "--help" in args or "-h" in args:
         return False
-    for index, arg in enumerate(args):
-        if arg in {"--config-guard=on", "--config-guard=off"}:
-            return True
-        if arg == "--config-guard" and index + 1 < len(args) and args[index + 1] in {"on", "off"}:
-            return True
-    return False
+    controls = {"--uninstall", "--config-guard", "--mode", "--prepare-plugin"}
+    return any(isinstance(arg, str) and arg.split("=", 1)[0] in controls for arg in args)
 
 
 def mutation_targets(words):

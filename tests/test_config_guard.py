@@ -217,6 +217,23 @@ class ConfigGuardTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIsNone(self.run_process(self.payload("Bash", command=command)))
 
+    def test_owner_installer_controls_stay_protected_in_both_modes(self):
+        controls = ["--uninstall", "--config-guard off", "--config-guard=on",
+                    "--mode off", "--mode=away", "--prepare-plugin"]
+        for mode in ("on", "off"):
+            self.write_config({"config_guard": mode})
+            for control in controls:
+                for prefix in ("python3 install.py", "./install.py"):
+                    command = prefix + " " + control
+                    with self.subTest(mode=mode, command=command):
+                        result = self.run_process(self.payload("Bash", command=command))
+                        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+            for command in ("python3 install.py", "python3 install.py --proactive", "./install.py",
+                            "python setup.py install", "python3 unrelated.py --uninstall",
+                            "printf '%s' 'python3 install.py --uninstall'"):
+                with self.subTest(mode=mode, command=command):
+                    self.assertIsNone(self.run_process(self.payload("Bash", command=command)))
+
     def bash(self, command):
         return guard.check_bash_command(command, str(self.cwd))
 

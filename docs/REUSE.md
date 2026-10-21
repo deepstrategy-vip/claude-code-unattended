@@ -13,7 +13,7 @@ PR #2 的`b765901b788a335a2e3cd3a7ea566100f18c166f`收到四项修改请求，�
 | 缩小默认范围 | 默认high排除实际全局CLAUDE.md；hook manifest仅hooks/hooks.json，不拦普通src/hooks.json；本产品开关配置继续保护 |
 | 负责人控制 | unattended-config.json的config_guard=on/off，默认on；install.py --config-guard on/off；没有环境override；off放开普通保护目标，但开关文件/已识别自停用仍阻止 |
 
-Claude不能自行运行停用安装命令绕过拒绝；应交负责人手动、Codex或负责人在终端运行安装器处理。该开关是逻辑政策，不是OS访问控制或不可逆锁定，任意同用户程序、解释器和动态机制仍有已知缺口。修订后Python 3.9与3.14各112项完整测试已通过，包含managed/plugin依赖健康、缺失、版本不符、超时及配置开关回归。下一步推新头并取得匹配当前完整SHA的复查通过；102项只保留为旧头历史结果，不代替新头批准。
+Claude不能自行运行停用安装命令绕过拒绝；应交负责人手动、Codex或负责人在终端运行安装器处理。该开关是逻辑政策，不是OS访问控制或不可逆锁定，任意同用户程序、解释器和动态机制仍有已知缺口。修订后Python 3.9与3.14各113项完整测试已通过，包含managed/plugin依赖健康、缺失、版本不符、超时及配置开关回归。下一步推新头并取得匹配当前完整SHA的复查通过；102项只保留为旧头历史结果，不代替新头批准。
 
 ## 组件替换范围：复用基础设施，保留本地政策
 
@@ -157,6 +157,9 @@ Python 3.9与3.14分别通过102项unittest，保留前版51项全部场景与48
 
 ## B阶段外部复查后的修订状态
 
-前一提交已实现parser、MIT配置保护和可选插件入口，Python 3.9与3.14各102项通过；这是PR #2旧头的结果。外部Claude复查请求的四项修订已落实，Python 3.9与3.14各112项完整测试通过；新头CI与再次复查待完成。当前config-guard仅是已知路径的纵深防御，审计失败仍保留保护deny；其默认high不保护全局CLAUDE.md，hooks-manifest限定hooks/hooks.json；负责人开关默认on，无环境覆盖，off也不允许Claude改开关/已识别自停用。
+前一提交已实现parser、MIT配置保护和可选插件入口，Python 3.9与3.14各102项通过；这是PR #2旧头的结果。外部Claude复查请求的四项修订已落实，Python 3.9与3.14各113项完整测试通过；新头CI与再次复查待完成。当前config-guard仅是已知路径的纵深防御，审计失败仍保留保护deny；其默认high不保护全局CLAUDE.md，hooks-manifest限定hooks/hooks.json；负责人开关默认on，无环境覆盖，off也不允许Claude改开关/已识别自停用。
 
-SessionStart在managed/native入口新增依赖健康提醒，正常不输出；版本缺失/不符则可见提示修复并注入保守Shell safety上下文，失败仍不阻塞。没有把故障当作安全或允许。本轮112项完整测试覆盖managed/native健康、缺失、版本不符与超时，并新增配置开关、普通目标off放行和开关自保护等场景。仍须推新头、验证CI、重新取得精确40位SHA的Claude通过；未批准前不合并、不安装实际用户配置。最终测试与发布状态以交接记录、PR及任务进度为准。
+SessionStart在managed/native入口新增依赖健康提醒，正常不输出；版本缺失/不符则可见提示修复并注入保守Shell safety上下文，失败仍不阻塞。没有把故障当作安全或允许。本轮113项完整测试覆盖managed/native健康、缺失、版本不符与超时，并新增配置开关、普通目标off放行和开关自保护等场景。仍须推新头、验证CI、重新取得精确40位SHA的Claude通过；未批准前不合并、不安装实际用户配置。最终测试与发布状态以交接记录、PR及任务进度为准。
+
+
+复查补充：提交`e4da460572f64518595ac8bee25f4797064984b6`的CI 8/8通过，Claude确认四项修改均已验证，再要求堵住安装器卸载/切换入口。现已将`--uninstall`、`--config-guard`、`--mode`、`--prepare-plugin`全部作为负责人专用参数，在config_guard on/off时均拒绝Claude调用；普通不带这些参数的安装器更新及其他setup.py安装命令仍可运行。任何新头仍须重新通过CI及精确SHA复查。

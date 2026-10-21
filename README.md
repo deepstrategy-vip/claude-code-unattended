@@ -4,7 +4,7 @@
 
 > **English:** Presence-gated Claude Code hooks: answer routine questions, bound optional-offer continuations, and deny pending permissions while away. No automatic approval of destructive operations or plans. Existing shell guards and background-task redirects remain active. Owner decisions require successful private audit; protective rewrite/redirect/config denials use best-effort audit. Hook/runtime failures still fail open.
 
-解析、配置保护和分发已改用现成基础；验证与发布状态见[交接记录](docs/HANDOFF.md)。外部复查要求的四项修改已落实；修订后在 Python 3.9 与 3.14 各通过 112 项确定性测试，待新头CI与匹配SHA的再次复查。尚未验证真实 Desktop/手机端到端效果。背景见[原研究](docs/RESEARCH.md)，本轮逐组件选型和固定来源见[复用报告](docs/REUSE.md)。
+解析、配置保护和分发已改用现成基础；验证与发布状态见[交接记录](docs/HANDOFF.md)。外部复查要求的四项修改已落实；修订后在 Python 3.9 与 3.14 各通过 113 项确定性测试，待新头CI与匹配SHA的再次复查。尚未验证真实 Desktop/手机端到端效果。背景见[原研究](docs/RESEARCH.md)，本轮逐组件选型和固定来源见[复用报告](docs/REUSE.md)。
 
 ## 为什么需要
 
@@ -146,7 +146,7 @@ python3 install.py --prepare-plugin
 
 配置保护只deny，不自动批准、不提供ask或上游allow逃生环境开关。确定性保护拒绝先尝试写不含原文的结构化审计；即使日志失败仍deny，避免因为审计故障让Claude关闭护栏。这与替使用者回答问题、拒绝计划/权限及强制续跑不同：后者仍须成功写入审计才输出决定。解析/运行异常继续fail-open。
 
-负责人可在`unattended-config.json`设置`"config_guard": "on"`或`"off"`，默认on；也可亲自运行`python3 install.py --config-guard off`或`--config-guard on`。不支持环境变量关闭。off时普通受保护目标不再由此守卫拒绝，但开关配置文件及已识别的自我禁用尝试仍受保护；Claude收到拒绝应继续独立工作，把需要调整之处交给负责人手动处理、Codex处理，或由负责人在终端运行安装器，不能自行执行停用命令绕过拒绝。
+负责人可在`unattended-config.json`设置`"config_guard": "on"`或`"off"`，默认on；也可亲自运行`python3 install.py --config-guard off`或`--config-guard on`。不支持环境变量关闭。off时普通受保护目标不再由此守卫拒绝，但开关配置文件及已识别的自我禁用尝试仍受保护；Claude收到拒绝应继续独立工作，把需要调整之处交给负责人手动处理、Codex处理，或由负责人在终端运行安装器，不能自行执行停用命令绕过拒绝。负责人专用参数包括`--uninstall`、`--config-guard`、`--mode`和`--prepare-plugin`；在on/off两种状态均拒绝Claude调用这些参数。不带这些参数的安装器正常更新不拦截。
 
 这是逻辑上的负责人控制，不是操作系统访问控制或不可逆锁定。动态变量、解释器程序、别名/函数、外部同用户进程及未覆盖写入机制仍有缺口；fail-open也不能保证防篡改。不会为了保护hook而扩大权限或切换模式。完整选型、误判/漏判和许可差异见[复用报告](docs/REUSE.md)。
 
@@ -174,7 +174,7 @@ python3 install.py --prepare-plugin
 CCU_SHFMT=/path/to/verified/shfmt python3 -m unittest discover -s tests -v
 ```
 
-CI准备同一官方固定摘要的二进制，测试中离线导入临时配置目录；不会安装到实际用户配置。复查前提交在 Python 3.9 与 3.14 各通过102项，包括原51项全部场景、48条原shell分类样例、新AST/config-guard/插件/迁移与逐字节正文保留测试。四项复查修改后已完整重跑，Python 3.9与3.14各112项通过；新增覆盖managed/plugin健康、缺失、版本不符与超时提示，以及配置开关和保护拒绝日志故障场景。102项仅是旧头历史结果。协议测试不等于Desktop/手机端到端验收，CI与发布结果见[交接记录](docs/HANDOFF.md)。
+CI准备同一官方固定摘要的二进制，测试中离线导入临时配置目录；不会安装到实际用户配置。复查前提交在 Python 3.9 与 3.14 各通过102项，包括原51项全部场景、48条原shell分类样例、新AST/config-guard/插件/迁移与逐字节正文保留测试。四项复查修改后已完整重跑，Python 3.9与3.14各113项通过；新增覆盖managed/plugin健康、缺失、版本不符与超时提示，以及配置开关和保护拒绝日志故障场景。102项仅是旧头历史结果。协议测试不等于Desktop/手机端到端验收，CI与发布结果见[交接记录](docs/HANDOFF.md)。
 
 ## 致谢与来源
 

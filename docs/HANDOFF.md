@@ -4,7 +4,7 @@
 
 模式为**implementation，发布待门禁**。在基线`d3555349b611685d6193bcb0e5f12c9668e9d6aa`上，用成熟parser、现成config-guard分类和官方插件分发替换对应自研基础；无人值守授权政策保持。A阶段选型与固定许可/来源见[REUSE.md](REUSE.md)，前版研究见[RESEARCH.md](RESEARCH.md)。
 
-PR #2 的提交`b765901b788a335a2e3cd3a7ea566100f18c166f`收到外部Claude复查的四项修改请求，四项修改已落实并完整重跑本地测试；旧头没有通过，新头CI及再次复查仍待完成。只有评论明确给出Claude复查通过，且完整40位SHA等于当前PR头，才可squash合并并安装；头改变必须重新复查。此文件不代表已批准或已发布。
+PR #2 的提交`b765901b788a335a2e3cd3a7ea566100f18c166f`收到外部Claude复查的四项修改请求，四项修改已落实并完整重跑本地测试；旧头没有通过，新增安装器控制修订的新头CI及再次复查仍待完成。只有评论明确给出Claude复查通过，且完整40位SHA等于当前PR头，才可squash合并并安装；头改变必须重新复查。此文件不代表已批准或已发布。
 
 ## 实现范围与接口
 
@@ -19,7 +19,7 @@ PR #2 的提交`b765901b788a335a2e3cd3a7ea566100f18c166f`收到外部Claude复�
 
 ## 验证状态
 
-前版基线为51项；复查前提交在Python 3.9和3.14各通过**102项unittest**；**四项修改后Python 3.9与3.14各112项完整unittest通过；新头CI与精确SHA复查待完成**。包含全部原场景、48条原shell分类与25条新增语义样例、共享parser故障/非阻塞超时、config-guard读写/审计/已知缺口、真实调用临时安装的guards、插件迁移、幂等/备份/卸载，以及CRLF/混合换行/无结尾换行/尾部空白逐字节保留。官方release网络下载流程也已在隔离目录使用系统Python成功验证；hooks运行时无网络。
+前版基线为51项；复查前提交在Python 3.9和3.14各通过**102项unittest**；**四项修改后Python 3.9与3.14各113项完整unittest通过；新头CI与精确SHA复查待完成**。包含全部原场景、48条原shell分类与25条新增语义样例、共享parser故障/非阻塞超时、config-guard读写/审计/已知缺口、真实调用临时安装的guards、插件迁移、幂等/备份/卸载，以及CRLF/混合换行/无结尾换行/尾部空白逐字节保留。官方release网络下载流程也已在隔离目录使用系统Python成功验证；hooks运行时无网络。
 
 新增测试覆盖managed/native SessionStart的健康、缺失、版本不符与超时路径；配置开关默认/更新/off普通目标/开关自保护、保护拒绝在日志故障时保持等场景也有回归覆盖。
 
@@ -46,4 +46,7 @@ CCU_SHFMT=/path/to/verified/shfmt python3 -m unittest discover -s tests -v
 3. 缩小默认high误拦：排除全局CLAUDE.md，将hook manifest收窄到hooks/hooks.json，允许src/hooks.json等普通应用文件。
 4. 增加负责人on/off配置开关与安装参数，无环境逃生口；关闭普通保护后仍保护开关/自停用路径，明确人工/Codex处理方式及其非OS安全边界。
 
-上述修订已实现，Python 3.9和3.14各112项完整测试通过；尚未取得修订头批准，未合并、未安装实际用户配置。
+上述修订已实现，Python 3.9和3.14各113项完整测试通过；尚未取得修订头批准，未合并、未安装实际用户配置。
+
+
+复查补充：提交`e4da460572f64518595ac8bee25f4797064984b6`的CI 8/8通过，Claude确认四项修改均已验证，再要求堵住安装器卸载/切换入口。现已将`--uninstall`、`--config-guard`、`--mode`、`--prepare-plugin`全部作为负责人专用参数，在config_guard on/off时均拒绝Claude调用；普通不带这些参数的安装器更新及其他setup.py安装命令仍可运行。任何新头仍须重新通过CI及精确SHA复查。

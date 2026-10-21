@@ -35,3 +35,8 @@ destructive-command guards remain necessary. Fail-open intentionally means
 input/configuration/parser/runtime failures do not enforce this guard. Audit
 failure alone does not remove a known denial. Audit records and
 session state are not rotated or removed; retain them for at least 186 days.
+
+Static installer control detection now covers --uninstall, --config-guard,
+--mode and --prepare-plugin in either guard state; ordinary updates pass.
+This uses the install.py filename plus known flags, not code attestation; an
+unrelated installer with the same filename and flags may conservatively match.
