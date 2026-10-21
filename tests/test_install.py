@@ -134,9 +134,13 @@ class InstallTest(unittest.TestCase):
         initial = (self.dir / "settings.json").read_bytes()
         for extra in (("--idle-seconds", "0"), ("--max-stop-continuations", "21"),
                       ("--unin",), ("--mod", "off"), ("--config-gu", "off"), ("--prepare-pl",)):
+            snapshot = {p.relative_to(self.dir): p.read_bytes() if p.is_file() else None
+                        for p in self.dir.rglob("*")}
             result = subprocess.run([sys.executable, str(INSTALL), "--claude-dir", str(self.dir), *extra],
                                     capture_output=True)
             self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(snapshot, {p.relative_to(self.dir): p.read_bytes() if p.is_file() else None
+                                        for p in self.dir.rglob("*")})
         (self.dir / "unattended-config.json").write_text("[1]")
         result = subprocess.run([sys.executable, str(INSTALL), "--claude-dir", str(self.dir)], capture_output=True)
         self.assertNotEqual(result.returncode, 0)
