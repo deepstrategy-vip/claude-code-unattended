@@ -1,8 +1,10 @@
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import unittest
+import tempfile
 from pathlib import Path
 
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "bash_guard.py"
@@ -85,8 +87,10 @@ class CheckTest(unittest.TestCase):
 
 class HookProtocolTest(unittest.TestCase):
     def run_hook(self, payload):
-        return subprocess.run([sys.executable, str(HOOK)], input=payload,
-                              capture_output=True, text=True, check=True).stdout
+        with tempfile.TemporaryDirectory() as directory:
+            return subprocess.run([sys.executable, str(HOOK)], input=payload,
+                                  env={**os.environ, "CCU_CONFIG_DIR": directory},
+                                  capture_output=True, text=True, check=True).stdout
 
     def test_deny_output(self):
         out = self.run_hook(json.dumps({"tool_name": "Bash", "tool_input": {"command": "bash -c ls"}}))

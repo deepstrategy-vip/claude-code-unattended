@@ -26,9 +26,12 @@ REASON = (
 
 def main():
     try:
-        sys.stdin.read()
+        data = json.load(sys.stdin)
+        from unattended import record_decision
+        record_decision(data, "task-redirected", "Start background agent instead of task card",
+                        "deny_background_agent")
     except Exception:
-        pass
+        pass  # deterministic redirect also applies to malformed legacy input
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

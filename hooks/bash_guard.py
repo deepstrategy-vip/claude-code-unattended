@@ -248,6 +248,12 @@ def main():
     except Exception:
         return
     if reason:
+        try:
+            from unattended import record_decision
+            record_decision(data, "bash-rewrite", "Flagged shell/delete syntax; rewrite requested",
+                            "deny_rewrite", cmd)
+        except Exception:
+            pass  # legacy rewrite guard stays effective if best-effort audit fails
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
