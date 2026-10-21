@@ -6,6 +6,7 @@ import sys
 import unittest
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "bash_guard.py"
 spec = importlib.util.spec_from_file_location("bash_guard", HOOK)
@@ -79,6 +80,47 @@ def verdict(cmd):
 
 
 class CheckTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if guard.parse("true") is None:
+            raise RuntimeError("Verified shfmt is required: run dependency bootstrap or set CCU_SHFMT")
+
+    def test_ast_execution_contexts(self):
+        cases = [
+            ('echo "$(rm -rf $X)"', RM),
+            ('cat <(rm -rf $X)', RM),
+            ("cat <<EOF\n$(rm -rf $X)\nEOF", RM),
+            ("cat <<'EOF'\n$(rm -rf $X)\nEOF", ALLOW),
+            ("cat <<EOF\nrm -rf $X\nEOF", ALLOW),
+            ("# bash -c x\necho done", ALLOW),
+            ("echo bash -c ls", ALLOW),
+            ("printf '%s' 'eval rm $X'", ALLOW),
+            ("'bash' '-c' ls", SHELL),
+            (r"b\ash -c ls", SHELL),
+            (r"r\m -f $X", RM),
+            ("sudo -u nobody rm -f $X", RM),
+            ("env -u OLD FOO=1 command rm -f $X", RM),
+            ("command -v rm", ALLOW),
+            ("nice -n 5 rm $X", RM),
+            ("rm -rf 'logs/*/*'", ALLOW),
+            (r"rm -rf logs/\*/file", ALLOW),
+            ('rm -rf "${S:?$(echo missing)}"/x', RM),
+            ('echo 中文; rm "$X"', RM),
+            ('echo "# allow-shell-c"; bash -c ls', SHELL),
+            ('bash -c ls # allow-shell-c', ALLOW),
+            ('rm $X # allow-shell-c', RM),
+            ('setopt nullglob; rm -rf $X **/*.py(.N)', RM),
+            ('echo "$(cd /tmp)"; rm -rf a/*', ALLOW),
+            ('echo "$(cd /tmp && rm -rf a/*)"', RM),
+        ]
+        for command, expected in cases:
+            with self.subTest(command=command):
+                self.assertEqual(verdict(command), expected)
+
+    def test_parser_failure_is_silent(self):
+        with mock.patch.object(guard, "parse", return_value=None):
+            self.assertIsNone(guard.check("rm -rf $X"))
+
     def test_cases(self):
         for cmd, want in CASES:
             with self.subTest(cmd=cmd):
@@ -86,6 +128,11 @@ class CheckTest(unittest.TestCase):
 
 
 class HookProtocolTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if guard.parse("true") is None:
+            raise RuntimeError("Verified shfmt is required: run dependency bootstrap or set CCU_SHFMT")
+
     def run_hook(self, payload):
         with tempfile.TemporaryDirectory() as directory:
             return subprocess.run([sys.executable, str(HOOK)], input=payload,

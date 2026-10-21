@@ -1,0 +1,7 @@
+{
+  "name": "claude-code-unattended",
+  "version": "0.2.0",
+  "description": "Presence-gated unattended policies, shell rewrites and configuration protection.",
+  "license": "MIT",
+  "repository": "https://github.com/deepstrategy-vip/claude-code-unattended"
+}
