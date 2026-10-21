@@ -48,6 +48,8 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(len(s["hooks"]["Stop"]), 1)
         self.assertNotIn("matcher", s["hooks"]["Stop"][0])
         self.assertEqual(len(s["hooks"]["PermissionRequest"]), 1)
+        self.assertEqual(len(s["hooks"]["UserPromptSubmit"]), 1)
+        self.assertNotIn("matcher", s["hooks"]["UserPromptSubmit"][0])
         self.assertNotIn("askUserQuestionTimeout", s)
         self.assertNotIn("agentPushNotifEnabled", s)
         md = (self.dir / "CLAUDE.md").read_text()
@@ -75,6 +77,7 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(s["hooks"]["PreToolUse"], [OTHER_HOOK])
         self.assertEqual((self.dir / "CLAUDE.md").read_text(), USER_MD)
         self.assertFalse((self.dir / "hooks" / "bash_guard.py").exists())
+        self.assertNotIn("UserPromptSubmit", s["hooks"])
 
     def test_refuses_invalid_settings(self):
         (self.dir / "settings.json").write_text("{ not json")

@@ -25,6 +25,7 @@ HOOKS = [
     ("PreToolUse", "AskUserQuestion|ExitPlanMode", "unattended.py"),
     ("PermissionRequest", "*", "unattended.py"),
     ("Stop", None, "unattended.py"),
+    ("UserPromptSubmit", None, "unattended.py"),
 ]
 SCRIPTS = sorted({script for _, _, script in HOOKS})
 EVENTS = sorted({event for event, _, _ in HOOKS})
@@ -147,7 +148,7 @@ def main():
     ap.add_argument("--idle-seconds", type=int, help="away threshold, 1..86400 (default: 300 seconds)")
     ap.add_argument("--mode", choices=("auto", "off", "away"),
                     help="auto=macOS HID idle; off=disable new interventions; away=explicit always-away")
-    ap.add_argument("--max-stop-continuations", type=int, help="Stop session budget, 1..20 (default: 3)")
+    ap.add_argument("--max-stop-continuations", type=int, help="Stop budget per human turn, 1..20 (default: 3)")
     ap.add_argument("--question-timeout", choices=("60s", "5m", "10m", "never"),
                     help="opt-in global askUserQuestionTimeout; inactive during Remote Control")
     ap.add_argument("--agent-push", action="store_true", help="opt-in agentPushNotifEnabled")

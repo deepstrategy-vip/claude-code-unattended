@@ -2,7 +2,7 @@
 
 让 Claude Code 在你不在电脑边时也能一直跑下去，不被弹窗卡住。
 
-> **English:** Presence-gated Claude Code hooks: answer routine questions, bound optional-offer continuations, and deny pending permissions while away. No automatic approval of destructive operations or plans. Existing shell guards and background-task redirects remain active. Errors pass through to Claude's original flow.
+> **English:** Presence-gated Claude Code hooks: answer routine questions, bound optional-offer continuations, and deny pending permissions while away. No automatic approval of destructive operations or plans. Existing shell guards and background-task redirects remain active. New automatic decisions fail open; legacy rewrite/redirect auditing is best effort.
 
 **当前边界：已验证 Python 协议、安装器与本机 HID 检测，尚未验证真实 Desktop/手机端到端效果。** 完整调研和来源见 [研究报告](docs/RESEARCH.md)，实施与验收状态见 [交接记录](docs/HANDOFF.md)。
 
@@ -41,7 +41,7 @@
 
 - AskUserQuestion：用官方 `allow + updatedInput.answers` 协议保留完整输入与已有答案，选标有 `(Recommended)` / `（推荐）` 的选项，否则第一项。多选只选一个稳妥选项。重复问题/选项、多个推荐项或无效格式不介入。
 - 涉及删除、付费、发布、生产、凭据、权限等关键词的问题保守拒绝，要求记入「待你决定」，继续独立的已授权工作。关键词无法证明真实授权，也可能误判；推荐标签不产生权限。
-- Stop：只检查 assistant 最后非空行的明确中英征询；用户文字、工具输出、代码/引用、明确待决定或风险内容不应触发。`stop_hook_active` 必须为 false，指纹去重，持久化会话预算默认 **3 次**，并发加锁。正常完成后应结束，不创造工作；旧运行时只回读最多 256 KiB 的 assistant 文本。
+- Stop：只检查 assistant 最后非空行的明确中英征询；用户文字、工具输出、代码/引用、明确待决定或风险内容不应触发。风险只检查征询本身和紧邻上一行，避免长汇报里的历史操作词误伤。持久化预算默认每个人类回合 **3 次**，指纹去重并发加锁；active 为 true 时仍受同一预算约束。UserPromptSubmit 在新用户消息时重置本会话预算，不调用 ioreg。正常完成后应结束，不创造工作；旧运行时只回读最多 256 KiB 的 assistant 文本。
 - PermissionRequest：离席时只返回 **deny**，`interrupt:false`，附安全改写/跳过指示；不自动 allow，不切换权限模式，不绕过拒绝。只能处理实际经过该事件的请求。
 - ExitPlanMode：离席时拒绝审批，仍在计划模式，只能做该模式允许的只读工作。不能保证剩余实现完成。
 
@@ -49,9 +49,9 @@
 
 ### 决策记录
 
-新旧 hooks 的每次自动回答、拒绝、重定向和强制继续都先追加到配置目录的 `unattended-decisions.jsonl`（默认 `~/.claude/unattended-decisions.jsonl`），成功后才输出决定。文件权限 `0600`，时间为 UTC，字段为 `time/session/type/summary/selected/content_sha256`。不存原始问题、命令、路径、选项文字；自动答案记录问题/选项 SHA-256、从 1 开始的选项索引和推荐标志，可结合对应会话原文核对。审计失败不介入。
+新增无人值守 hook 的每次自动回答、拒绝和强制继续都先追加到配置目录的 `unattended-decisions.jsonl`（默认 `~/.claude/unattended-decisions.jsonl`），成功后才输出决定。文件权限 `0600`，时间为 UTC，字段为 `time/session/type/summary/selected/content_sha256`。不存原始问题、命令、路径、选项文字；自动答案记录问题/选项 SHA-256、从 1 开始的选项索引和推荐标志，可结合对应会话原文核对。新增自动决定审计失败不介入。原有 Bash 改写和分支任务重定向也记录，但审计尽力而为，失败仍输出原来的 deny；重定向收到非 JSON 输入也保持拒绝，不因日志故障恢复弹窗。
 
-会话 Stop 预算放在 `unattended-state/`，不跨会话复用。不自动清理审计或状态，卸载也保留，日志保留至少 **186 天**；自行备份时也需遵守保留期。日志不加密，勿原样公开。
+按会话隔离的每回合 Stop 预算放在 `unattended-state/`，不跨会话复用。不自动清理审计或状态，卸载也保留，日志保留至少 **186 天**；自行备份时也需遵守保留期。日志不加密，勿原样公开。
 
 ### bash_guard 拦什么
 
@@ -89,7 +89,7 @@ python3 install.py
 ```
 
 `install.py` 会：
-- 把三个 hook 脚本复制到配置目录 `hooks/`，注册 PreToolUse、PermissionRequest 和 Stop；
+- 把三个 hook 脚本复制到配置目录 `hooks/`，注册 PreToolUse、PermissionRequest、Stop 和 UserPromptSubmit；
 - 把规则写进 `~/.claude/CLAUDE.md`，用标记注释包起来，不会动你自己写的内容；
 - 打开 `inputNeededNotifEnabled`，保存 `unattended-config.json`；默认不覆盖提问超时、主动推送或输出风格。
 
@@ -102,7 +102,7 @@ python3 install.py
 | `--uninstall` | 卸载：移除 hook、settings 条目和 CLAUDE.md 里的规则块（`inputNeededNotifEnabled` 保持不动） |
 | `--idle-seconds N` | 本机空闲阈值，1–86400 秒，默认 300；更新未指定时保留已有值 |
 | `--mode auto\|off\|away` | 默认 auto；off 停用新增处理，away 显式始终视为离席 |
-| `--max-stop-continuations N` | 每会话 Stop 预算，1–20，默认 3；预算耗尽后正常结束 |
+| `--max-stop-continuations N` | 每个人类回合 Stop 预算，1–20，默认 3；预算耗尽后正常结束 |
 | `--question-timeout 60s\|5m\|10m\|never` | 可选全局 askUserQuestionTimeout；Remote Control 连接时不计时 |
 | `--agent-push` | 可选开启 agentPushNotifEnabled，让 Claude 可主动发手机通知 |
 | `--proactive` | 可选设置全局 outputStyle=Proactive；不会改变权限模式 |
@@ -120,7 +120,7 @@ python3 install.py
 ## 设计原则
 
 - **不绕过安全检查**。这个项目只是让命令写成能通过检查的样子，真正的保护仍然由 Claude Code 内置检查负责。
-- **出错就放行（fail-open）**。hook 自己解析失败或者异常时，一律放行，不会因为 hook 把会话卡死。
+- **出错就放行（fail-open）**。新增自动决策解析或审计异常时不介入；原有改写/重定向守卫的审计失败仍保留原 deny，重定向也兼容无效输入。
 - **拒绝时给出具体改写方法**，而不是只说"不行"，这样 Claude 能一次改对。
 - **用启发式判断，不是完整的 shell 解析器**。可能漏判或误判；误判时 Claude 换种写法就能过。
 

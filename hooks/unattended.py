@@ -116,7 +116,7 @@ def record_decision(payload, kind, summary, selected, content="", stop_limit=Non
     """Persist BEFORE intervening. No raw prompts, labels, commands or paths.
 
     Log never rotated/deleted here or by uninstall (retained >=186 days).
-    A locked per-session budget survives process restarts and concurrent Stops.
+    A locked per-turn budget survives process restarts and concurrent Stops.
     """
     import fcntl
     root = config_dir()
@@ -155,6 +155,32 @@ def record_decision(payload, kind, summary, selected, content="", stop_limit=Non
         log.flush()
         os.fsync(log.fileno())
     return True
+
+
+def reset_turn(payload):
+    """UserPromptSubmit starts a fresh human turn, without probing presence.
+
+    Uses the same lock as Stop updates. No prompt text is stored and resetting
+    bookkeeping is not an automatic answer/denial/continuation decision.
+    """
+    import fcntl
+    session = payload.get("session_id")
+    if not isinstance(session, str) or not session:
+        return
+    root = config_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    with private_file(root / "unattended-decisions.jsonl") as log:
+        fcntl.flock(log, fcntl.LOCK_EX)
+        state_dir = root / "unattended-state"
+        state_dir.mkdir(mode=0o700, exist_ok=True)
+        if state_dir.is_symlink():
+            raise ValueError("symlink state directory")
+        with private_file(state_dir / (fingerprint(session) + ".json")) as state:
+            state.seek(0)
+            state.truncate()
+            state.write(json.dumps({"count": 0, "seen": []}))
+            state.flush()
+            os.fsync(state.fileno())
 
 
 def pre_deny(reason):
@@ -254,15 +280,17 @@ def assistant_message(payload):
 
 
 def optional_offer(message):
-    lines = [line for line in message.splitlines() if line.strip()]
-    if not lines or len(lines[-1]) > 250:
+    lines = message.splitlines()
+    last_index = next((i for i in range(len(lines) - 1, -1, -1) if lines[i].strip()), None)
+    if last_index is None or len(lines[last_index]) > 250:
         return False
-    raw_last = lines[-1]
+    raw_last = lines[last_index]
     last = raw_last.strip()
+    context = "\n".join(lines[max(0, last_index - 1):last_index + 1])
     # Don't reinterpret quoted examples, code, or an explicitly deferred decision.
     if raw_last.startswith(("    ", "\t")) or last.startswith((">", "`")) or message.count("```") % 2:
         return False
-    if "待你决定" in message or OWNER_RISK.search(message[-2000:]):
+    if "待你决定" in context or OWNER_RISK.search(context):
         return False
     return bool(OFFER.fullmatch(last.lstrip("*- ")))
 
@@ -277,8 +305,8 @@ def decide(payload, config):
             not isinstance(payload.get("tool_name"), str) or not payload["tool_name"]
             or not isinstance(payload.get("tool_input"), dict)):
         return None
-    if event == "Stop" and payload.get("stop_hook_active") is not False:
-        return None  # missing/invalid flag is also uncertain
+    if event == "Stop" and not isinstance(payload.get("stop_hook_active"), bool):
+        return None  # both true/false can continue within this human turn's budget
     if not is_away(config):
         return None
     if event == "PermissionRequest":
@@ -307,6 +335,9 @@ def decide(payload, config):
 def main():
     try:
         payload = json.load(sys.stdin)
+        if payload.get("hook_event_name") == "UserPromptSubmit":
+            reset_turn(payload)
+            return
         result = decide(payload, configuration())
         if result:
             print(json.dumps(result, ensure_ascii=False))

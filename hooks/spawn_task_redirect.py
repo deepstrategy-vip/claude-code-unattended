@@ -31,7 +31,7 @@ def main():
         record_decision(data, "task-redirected", "Start background agent instead of task card",
                         "deny_background_agent")
     except Exception:
-        return
+        pass  # deterministic redirect also applies to malformed legacy input
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

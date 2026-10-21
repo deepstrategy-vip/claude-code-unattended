@@ -215,7 +215,8 @@ class HookTest(unittest.TestCase):
 
     def test_audit_failure_fails_open_without_action(self):
         (self.root / "unattended-decisions.jsonl").mkdir()
-        for payload in (question(), stop(), {"hook_event_name": "PermissionRequest"}):
+        for payload in (question(), stop(), {"hook_event_name": "PermissionRequest", "session_id": "test-session",
+                                            "tool_name": "Bash", "tool_input": {"command": "ls"}}):
             self.assertIsNone(self.run_hook(payload))
 
     def test_symlink_audit_not_followed(self):
@@ -263,7 +264,7 @@ class HookTest(unittest.TestCase):
         self.assertIsNone(self.run_hook(stop()))
         self.assertEqual(self.records(), [])
 
-    def test_legacy_hooks_also_audit_and_fail_open(self):
+    def test_legacy_hooks_audit_best_effort_without_losing_guards(self):
         for script, payload, kind in (("bash_guard.py", {"tool_name": "Bash", "tool_input":
                 {"command": "bash -c ls"}}, "bash-rewrite"),
                 ("spawn_task_redirect.py", {}, "task-redirected")):
@@ -277,7 +278,38 @@ class HookTest(unittest.TestCase):
             result = subprocess.run([sys.executable, str(HOOK.parent / script)], input=json.dumps(
                 {"tool_name": "Bash", "tool_input": {"command": "bash -c ls"}}), env=self.env,
                 text=True, capture_output=True, check=True)
-            self.assertEqual(result.stdout, "")
+            self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+        result = subprocess.run([sys.executable, str(HOOK.parent / "spawn_task_redirect.py")], input="not json",
+                                env=self.env, text=True, capture_output=True, check=True)
+        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_stop_budget_resets_on_each_human_turn_without_presence_probe(self):
+        for _ in range(5):
+            self.assertIsNone(self.run_hook({"hook_event_name": "UserPromptSubmit", "session_id": "test-session"},
+                                          CCU_MODE="invalid-config-is-not-read"))
+            self.assertIsNotNone(self.run_hook(stop()))
+            self.assertIsNone(self.run_hook(stop()))  # same fingerprint in this turn
+        self.assertEqual(len(self.records()), 5)
+        with patch.dict(os.environ, self.env), patch.object(u, "idle_seconds", side_effect=AssertionError), \
+                patch.object(u.sys, "stdin", io.StringIO(json.dumps(
+                    {"hook_event_name": "UserPromptSubmit", "session_id": "test-session"}))), \
+                patch.object(u.sys, "stdout", io.StringIO()) as out:
+            u.main()
+            self.assertEqual(out.getvalue(), "")
+
+    def test_active_stop_uses_same_turn_budget_and_dedup(self):
+        self.assertIsNotNone(self.run_hook(stop()))
+        self.assertIsNone(self.run_hook(stop(stop_hook_active=True)))
+        for message in ("Shall I finish the checks?", "需要我补全说明吗？"):
+            self.assertIsNotNone(self.run_hook(stop(message, stop_hook_active=True)))
+        self.assertIsNone(self.run_hook(stop("Can I finish the remaining tests?", stop_hook_active=True)))
+        self.assertEqual(len(self.records()), 3)
+
+    def test_stop_risk_scope_is_only_offer_and_immediate_previous_line(self):
+        report = "我把规则改好了，旧的配置已经删除并合并进新文件，权限设置没动。\n\n要我把这条也写进 CLAUDE.md 吗？"
+        self.assertIsNotNone(self.run_hook(stop(report)))
+        self.assertIsNone(self.run_hook(stop("要我推送到线上吗？")))
+        self.assertIsNone(self.run_hook(stop("下一步推送到线上。\n要我这样做吗？")))
 
     def test_concurrent_stop_respects_session_budget(self):
         def invoke(index):

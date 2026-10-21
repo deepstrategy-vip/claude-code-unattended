@@ -41,11 +41,11 @@
 
 **【官方文档】** Stop 在主 agent 回答结束时触发，用户主动中断不触发，API 错误归 StopFailure。输入包含 `session_id`、`transcript_path`、`stop_hook_active` 和 `last_assistant_message`。输出 `{"decision":"block","reason":"…"}` 会把原因交给 Claude，使它继续；这不是后台唤醒已经结束会话的调度器。Stop 支持 command、prompt 和 agent 类型；prompt hook 的 `ok:false` 原因可成为继续指令，`impossible:true` 可结束，agent hook 仍为实验性。([Stop 输入与输出](https://code.claude.com/docs/en/hooks#stop)，[prompt hooks](https://code.claude.com/docs/en/hooks#prompt-based-hooks)，[agent hooks](https://code.claude.com/docs/en/hooks#agent-based-hooks))
 
-**【官方文档与社区源码】** 官方要求在 `stop_hook_active:true` 时提前放行；内置连续阻止八次的限制只覆盖中间没有 tool call 的情况，不能当作完整的循环保护。`claude-verify-before-stop` 也先检查这个字段，再根据验证记录决定是否阻止。另一个 deference mirror 项目专门处理 “would you like me to…” 结尾，但维护讨论记录了误报、引用文本识别不足、强制继续产生低价值忙碌等问题。([Stop 循环上限](https://code.claude.com/docs/en/hooks-guide#stop-hook-hits-the-block-cap)，[verify-before-stop 源码](https://github.com/ianymu/claude-verify-before-stop/blob/main/verify-before-stop.sh)，[deference mirror 讨论](https://github.com/neomjs/neo-agent-brain/issues/136))
+**【官方文档与社区源码】** 官方指南用检查 `stop_hook_active` 避免无限续跑；本轮最终采用更明确的每回合持久预算与指纹去重，active 为 true 时仍可在预算内继续。内置连续阻止八次的限制只覆盖中间没有 tool call 的情况，不能当作完整的循环保护。`claude-verify-before-stop` 也先检查这个字段，再根据验证记录决定是否阻止。另一个 deference mirror 项目专门处理 “would you like me to…” 结尾，但维护讨论记录了误报、引用文本识别不足、强制继续产生低价值忙碌等问题。([Stop 循环上限](https://code.claude.com/docs/en/hooks-guide#stop-hook-hits-the-block-cap)，[verify-before-stop 源码](https://github.com/ianymu/claude-verify-before-stop/blob/main/verify-before-stop.sh)，[deference mirror 讨论](https://github.com/neomjs/neo-agent-brain/issues/136))
 
 **【工程判断】** 确定性 hook 只检查可靠的 assistant 最后非空行，对“要我……吗？”、“需要我……吗？”、“Would you like me to…?”、“Shall I…?” 等可选继续邀请做窄匹配。代码、引用、用户文本、工具返回、一般问号和明确“待你决定”不应触发。拿不到可靠 assistant 文本就不介入，不能扫描整段历史寻找一句“要我”。即使命中，也只要求完成已经授权、可逆的剩余工作；没有剩余工作应给完整汇报后停止，不能创造新任务。涉及发布、付款、生产、永久删除或明确缺授权的结尾保守放行，允许漏掉部分多余请示以减少越权风险。
 
-本轮选择 `stop_hook_active` 提前放行、会话隔离状态、相同结尾指纹去重，以及默认每会话最多三次强制继续。计数和追加记录需要并发锁，日志失败则不输出 block。prompt/agent hook 能增加语义判断，但引入模型成本、延迟和新的失败路径；本轮不采用它们，也不声称正则能判定真实授权。
+本轮最终选择会话隔离状态、相同结尾指纹去重，以及默认每个人类回合最多三次强制继续；UserPromptSubmit 重置本会话的计数和指纹，不探测空闲。stop_hook_active 为 true 时仍受同一预算约束。计数和追加记录需要并发锁，日志失败则不输出 block。prompt/agent hook 能增加语义判断，但引入模型成本、延迟和新的失败路径；本轮不采用它们，也不声称正则能判定真实授权。
 
 ### A3：HIDIdleTime 实测成本低，但它只代表本机输入空闲
 
@@ -105,13 +105,13 @@
 
 本轮实现以 `claude-code-unattended` 现有 command hooks 和安装器为基础，不迁移到外层 runner。macOS 用 `ioreg -r -c IOHIDSystem -d 1`，子进程超时两秒，默认阈值 300 秒；检测到近期本机输入、状态未知、运行错误都不介入。运行参数为 `CCU_MODE=auto|off|away`、`CCU_IDLE_SECONDS=1..86400`（默认 300）、`CCU_MAX_STOP_CONTINUATIONS=1..20`（默认 3）。其中 `auto` 使用 HID 空闲判断，`off` 关闭自动介入，`away` 是使用者显式声明离席、跳过 HID 判断；`away` 不代表检测到了无人，也不扩大授权。安装器通过 `--mode`、`--idle-seconds`、`--max-stop-continuations` 写入 `unattended-config.json`，环境变量用于运行时覆盖。不支持阈值零。AskUserQuestion 只对低风险问题填入答案，保留已有答案，优先完整匹配推荐项，否则选第一项；存在高风险决定就拒绝并要求记入“待你决定”，不把推荐标签等同于授权。ExitPlanMode 离席时拒绝，不切换权限，明确仍受 plan mode 的只读约束。
 
-Stop 仅拦截最后一行的窄范围可选继续邀请，优先读取 `last_assistant_message`，不依赖无界 transcript 扫描；跳过 `stop_hook_active`，会话隔离、指纹去重、默认每会话最多三次。固定 reason 只要求完成原已授权工作、记录合理假设，不能执行未获批准的对外动作或创造新任务。PermissionRequest 离席时统一 deny，并设 `interrupt:false`，引导安全替代、记录和跳过，拒绝不是授权。
+Stop 仅拦截最后一行的窄范围可选继续邀请，优先读取 `last_assistant_message`，不依赖无界 transcript 扫描；风险只扫描征询本身与紧邻上一行，避免长汇报的历史风险词误伤。会话隔离、指纹去重、默认每个人类回合最多三次，UserPromptSubmit 无需 ioreg 即重置；active 继续仍受同一上限约束。固定 reason 只要求完成原已授权工作、记录合理假设，不能执行未获批准的对外动作或创造新任务。PermissionRequest 离席时统一 deny，并设 `interrupt:false`，引导安全替代、记录和跳过，拒绝不是授权。
 
 CLAUDE.md 规则要求：例行可逆决定自己选稳妥默认并记录假设；只有确实缺授权的不可逆、对外、花钱、生产或权限扩张决定才汇总至最终“待你决定”；遇到阻塞继续独立的已授权工作；没有剩余工作就完整汇报并停止。它与 hook 的保守范围互补，也应保留用户自写规则和安装标记块之外的原文。
 
-所有本轮自动作答、自动拒绝和强制继续，以及已有 bash guard 和 task redirect 的拒绝，也必须先成功追加 `~/.claude/unattended-decisions.jsonl`，然后才输出控制决定。字段包括 `time`、`session`、`type`、`summary`、`selected`、`content_sha256`；为防问题或命令包含凭据，只保存结构化摘要、问题/选项摘要指纹、从一开始的索引和推荐项标记等信息，不保存原始问题、命令、选项文本或完整对话。指纹可帮助关联重复内容，但不等于原文已加密保存。会话状态与审计并发写入加锁；审计失败则 fail-open，不产生看不见的自动决定。日志不主动清理，保留至少 186 天；这不等于加密日志，使用者仍需按本机资料管理方式保护它。
+所有新增无人值守自动作答、自动拒绝和强制继续，必须先成功追加 `~/.claude/unattended-decisions.jsonl`，然后才输出控制决定。字段包括 `time`、`session`、`type`、`summary`、`selected`、`content_sha256`；为防问题或命令包含凭据，只保存结构化摘要、问题/选项摘要指纹、从一开始的索引和推荐项标记等信息，不保存原始问题、命令、选项文本或完整对话。指纹可帮助关联重复内容，但不等于原文已加密保存。会话状态与审计并发写入加锁；新增自动决定审计失败则 fail-open，不产生看不见的自动决定。已有 bash guard 和 task redirect 同样记录，但按指定复查要求审计尽力而为：失败仍保留原 deny；重定向对非法 JSON 也保持原有拒绝。它们只要求改写/后台执行，不替负责人新增授权，不能因审计故障恢复原来的等待。日志不主动清理，保留至少 186 天；这不等于加密日志，使用者仍需按本机资料管理方式保护它。
 
-安装器维持幂等、备份、卸载和临时 `--claude-dir` 测试路径，默认保留已有通知与风格偏好；`--question-timeout`、`--agent-push`、`--proactive` 是显式 opt-in，不改全局 permission mode 或 dialogExpiry。这些可选全局设置在卸载时保留，避免撤销使用者后续偏好；卸载不意味着恢复安装前所有全局设置。审查通过前不安装到真实用户配置。确定性测试已在 Python 3.9 通过，后续仍在补充用例；覆盖近期 HID 活动不干预、未知信号 fail-open、低风险答案协议、风险拒绝、Stop 防循环与并发审计、安装更新保留用户内容等逻辑。测试数量与最终验收应以对应提交的测试记录为准，这些测试仍不等于 Desktop 产品验收。
+安装器维持幂等、备份、卸载和临时 `--claude-dir` 测试路径，默认保留已有通知与风格偏好；`--question-timeout`、`--agent-push`、`--proactive` 是显式 opt-in，不改全局 permission mode 或 dialogExpiry。这些可选全局设置在卸载时保留，避免撤销使用者后续偏好；卸载不意味着恢复安装前所有全局设置。审查通过前不安装到真实用户配置。确定性测试已在 Python 3.9 与 3.14 通过；覆盖近期 HID 活动不干预、未知信号 fail-open、低风险答案协议、风险拒绝、Stop 防循环与并发审计、安装更新保留用户内容等逻辑。测试数量与最终验收应以对应提交的测试记录为准，这些测试仍不等于 Desktop 产品验收。
 
 ## 未采用方案：不靠扩大权限或永久忙碌解决等待
 
@@ -133,4 +133,6 @@ CLAUDE.md 规则要求：例行可逆决定自己选稳妥默认并记录假设�
 
 推荐项选择、风险关键词和结尾正则都是可审计的启发式策略，不能证明真实意图或授权。保守实现会漏掉部分可以自动继续的情况；过度扩大匹配则会把询问当批准。后续应以真实任务的决定日志、漏报/误报和待办是否合理为依据收窄或调整规则，保持“明确完成才停止、明确缺授权才留待决定”的目标；不能用少弹窗数量替代正确完成与权限边界的验证。
 
-本机确定性验证：Python 3.9 与 3.14 分别通过 48 个 unittest；包括临时目录安装与实际启动已安装 hook。仍未进行真实 Desktop/手机端到端实验。
+本机确定性验证：Python 3.9 与 3.14 分别通过 51 个 unittest；包括临时目录安装与实际启动已安装 hook。仍未进行真实 Desktop/手机端到端实验。
+
+指定复查修订：对长期会话采用每人类回合预算而非整个会话累计；只查征询和紧邻上一行的风险；原有改写守卫的日志尽力而为。安装器仍不默认覆盖风格，本轮实际发布按指定复查意见使用 `--proactive`，不使用 `--question-timeout`；这属于本轮明确选择，不改变通用安装默认。

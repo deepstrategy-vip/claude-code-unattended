@@ -253,7 +253,7 @@ def main():
             record_decision(data, "bash-rewrite", "Flagged shell/delete syntax; rewrite requested",
                             "deny_rewrite", cmd)
         except Exception:
-            return
+            pass  # legacy rewrite guard stays effective if best-effort audit fails
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
