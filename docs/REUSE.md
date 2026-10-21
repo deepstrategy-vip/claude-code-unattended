@@ -163,3 +163,5 @@ SessionStart在managed/native入口新增依赖健康提醒，正常不输出；
 
 
 复查补充：提交`e4da460572f64518595ac8bee25f4797064984b6`的CI 8/8通过，Claude确认四项修改均已验证，再要求堵住安装器卸载/切换入口。现已将`--uninstall`、`--config-guard`、`--mode`、`--prepare-plugin`全部作为负责人专用参数，在config_guard on/off时均拒绝Claude调用；普通不带这些参数的安装器更新及其他setup.py安装命令仍可运行。任何新头仍须重新通过CI及精确SHA复查。
+
+安装参数仅接受完整拼写；禁用argparse参数缩写，并回归验证缩写不能卸载、切模式或改开关，失败前不改配置。

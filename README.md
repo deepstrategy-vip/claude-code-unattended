@@ -146,7 +146,7 @@ python3 install.py --prepare-plugin
 
 配置保护只deny，不自动批准、不提供ask或上游allow逃生环境开关。确定性保护拒绝先尝试写不含原文的结构化审计；即使日志失败仍deny，避免因为审计故障让Claude关闭护栏。这与替使用者回答问题、拒绝计划/权限及强制续跑不同：后者仍须成功写入审计才输出决定。解析/运行异常继续fail-open。
 
-负责人可在`unattended-config.json`设置`"config_guard": "on"`或`"off"`，默认on；也可亲自运行`python3 install.py --config-guard off`或`--config-guard on`。不支持环境变量关闭。off时普通受保护目标不再由此守卫拒绝，但开关配置文件及已识别的自我禁用尝试仍受保护；Claude收到拒绝应继续独立工作，把需要调整之处交给负责人手动处理、Codex处理，或由负责人在终端运行安装器，不能自行执行停用命令绕过拒绝。负责人专用参数包括`--uninstall`、`--config-guard`、`--mode`和`--prepare-plugin`；在on/off两种状态均拒绝Claude调用这些参数。不带这些参数的安装器正常更新不拦截。
+负责人可在`unattended-config.json`设置`"config_guard": "on"`或`"off"`，默认on；也可亲自运行`python3 install.py --config-guard off`或`--config-guard on`。不支持环境变量关闭。off时普通受保护目标不再由此守卫拒绝，但开关配置文件及已识别的自我禁用尝试仍受保护；Claude收到拒绝应继续独立工作，把需要调整之处交给负责人手动处理、Codex处理，或由负责人在终端运行安装器，不能自行执行停用命令绕过拒绝。负责人专用参数包括`--uninstall`、`--config-guard`、`--mode`和`--prepare-plugin`；在on/off两种状态均拒绝Claude调用这些参数。不带这些参数的安装器正常更新不拦截。安装器只接受完整参数名，禁用argparse缩写，避免用短前缀规避这些控制。
 
 这是逻辑上的负责人控制，不是操作系统访问控制或不可逆锁定。动态变量、解释器程序、别名/函数、外部同用户进程及未覆盖写入机制仍有缺口；fail-open也不能保证防篡改。不会为了保护hook而扩大权限或切换模式。完整选型、误判/漏判和许可差异见[复用报告](docs/REUSE.md)。
 

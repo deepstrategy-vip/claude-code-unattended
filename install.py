@@ -167,7 +167,9 @@ def without_rules(text):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Install claude-code-unattended into the Claude Code config dir.")
+    # Canonical flags only: abbreviations must not evade owner-control matching.
+    ap = argparse.ArgumentParser(description="Install claude-code-unattended into the Claude Code config dir.",
+                                 allow_abbrev=False)
     ap.add_argument("--uninstall", action="store_true", help="remove the hooks, settings entries and CLAUDE.md rules")
     ap.add_argument("--no-push", action="store_true", help=f"do not set {PUSH_KEY} (mobile push for waiting prompts)")
     ap.add_argument("--claude-dir", default=os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude",

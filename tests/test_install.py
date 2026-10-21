@@ -132,7 +132,8 @@ class InstallTest(unittest.TestCase):
 
     def test_invalid_parameters_and_config_do_not_mutate_settings(self):
         initial = (self.dir / "settings.json").read_bytes()
-        for extra in (("--idle-seconds", "0"), ("--max-stop-continuations", "21")):
+        for extra in (("--idle-seconds", "0"), ("--max-stop-continuations", "21"),
+                      ("--unin",), ("--mod", "off"), ("--config-gu", "off"), ("--prepare-pl",)):
             result = subprocess.run([sys.executable, str(INSTALL), "--claude-dir", str(self.dir), *extra],
                                     capture_output=True)
             self.assertNotEqual(result.returncode, 0)
